@@ -13,6 +13,7 @@ import type { RuntimeAdapter, RuntimeEventSink } from './adapter.js';
 
 export class ConversationManager implements RuntimeEventSink {
   private readonly runtimeStates = new Map<string, { attached: boolean }>();
+  private readonly titleGenerated = new Set<string>();
 
   public constructor(
     private readonly db: AgentMuxDatabase,
@@ -85,6 +86,21 @@ export class ConversationManager implements RuntimeEventSink {
     return updated;
   }
 
+  public updateConversationTitle(conversationId: string, title: string): ConversationRecord {
+    const conversation = this.requireConversation(conversationId);
+    const now = new Date().toISOString();
+    const updated: ConversationRecord = { ...conversation, title, updatedAt: now };
+    this.db.updateConversation(updated);
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: 'conversation.updated',
+      payload: { action: 'title_updated', title },
+      createdAt: now,
+    });
+    return updated;
+  }
+
   public async ensureRuntime(conversationId: string): Promise<void> {
     const conversation = this.requireConversation(conversationId);
     const existing = this.runtimeStates.get(conversationId);
@@ -101,6 +117,7 @@ export class ConversationManager implements RuntimeEventSink {
     try {
       await adapter.resume(conversation, this);
     } catch (error) {
+      this.runtimeStates.delete(conversationId);
       this.setConversationState(conversationId, 'resume_failed');
       this.emitError(conversationId, error instanceof Error ? error.message : 'Resume failed');
     }
@@ -132,7 +149,17 @@ export class ConversationManager implements RuntimeEventSink {
     });
 
     this.setConversationState(conversationId, 'running', true);
-    await adapter.sendMessage(this.requireConversation(conversationId), content, this);
+    try {
+      await adapter.sendMessage(this.requireConversation(conversationId), content, this);
+    } catch (error) {
+      this.setConversationState(conversationId, 'error');
+      const msg = error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+          ? error
+          : `Failed to send message: ${JSON.stringify(error)}`;
+      this.emitError(conversationId, msg);
+    }
   }
 
   public async control(conversationId: string, input: ControlInput): Promise<void> {
@@ -156,6 +183,7 @@ export class ConversationManager implements RuntimeEventSink {
     }
 
     if (input.action === 'resume' || input.action === 'retry') {
+      this.runtimeStates.delete(conversationId);
       await this.ensureRuntime(conversationId);
     }
   }
@@ -221,6 +249,12 @@ export class ConversationManager implements RuntimeEventSink {
       payload: {},
       createdAt: new Date().toISOString(),
     });
+
+    // Auto-title: derive from first user message on first assistant reply
+    if (!this.titleGenerated.has(conversationId)) {
+      this.titleGenerated.add(conversationId);
+      this.autoGenerateTitle(conversationId);
+    }
   }
 
   public emitState(conversationId: string, state: ConversationRecord['runtimeState'], detail?: string): void {
@@ -265,6 +299,57 @@ export class ConversationManager implements RuntimeEventSink {
     });
   }
 
+  public emitToolResult(conversationId: string, payload: Record<string, unknown>): void {
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: 'tool.result',
+      payload,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  public emitPlanMessage(conversationId: string, payload: Record<string, unknown>): void {
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: 'plan.message',
+      payload,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  public emitCodexItem(conversationId: string, payload: Record<string, unknown>): void {
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: 'codex.item',
+      payload,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  public emitCodexRequest(conversationId: string, payload: Record<string, unknown>): void {
+    this.setConversationState(conversationId, 'waiting_input');
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: 'codex.request',
+      payload,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  public emitClaudeStep(conversationId: string, payload: Record<string, unknown>): void {
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: 'claude.step',
+      payload,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
   public emitApprovalRequest(conversationId: string, payload: Record<string, unknown>): void {
     this.setConversationState(conversationId, 'waiting_input');
     this.recordEvent({
@@ -284,6 +369,71 @@ export class ConversationManager implements RuntimeEventSink {
       type: 'error',
       payload: { message },
       createdAt: new Date().toISOString(),
+    });
+  }
+
+  public emitResumeHandle(conversationId: string, handle: Record<string, unknown>): void {
+    const conversation = this.db.getConversation(conversationId);
+    if (!conversation) return;
+    const now = new Date().toISOString();
+    const updated: ConversationRecord = {
+      ...conversation,
+      resumeHandle: { ...conversation.resumeHandle, ...handle },
+      updatedAt: now,
+    };
+    this.db.updateConversation(updated);
+  }
+
+  public emitTitleUpdate(conversationId: string, title: string): void {
+    const conversation = this.db.getConversation(conversationId);
+    if (!conversation) return;
+    const now = new Date().toISOString();
+    const updated: ConversationRecord = { ...conversation, title, updatedAt: now };
+    this.db.updateConversation(updated);
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: 'conversation.updated',
+      payload: { action: 'title_updated', title },
+      createdAt: now,
+    });
+    this.titleGenerated.add(conversationId);
+  }
+
+  public emitTokenUsage(conversationId: string, payload: Record<string, unknown>): void {
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: 'token_usage',
+      payload,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  private autoGenerateTitle(conversationId: string): void {
+    const events = this.db.listEvents(conversationId);
+    const userMessage = events.find((e) => e.type === 'message.user');
+    if (!userMessage) return;
+
+    const content = typeof userMessage.payload.content === 'string' ? userMessage.payload.content : '';
+    if (!content) return;
+
+    const title = content.length > 60 ? `${content.slice(0, 57)}...` : content;
+    const conversation = this.db.getConversation(conversationId);
+    if (!conversation) return;
+
+    // Only auto-title if it still has the default title
+    if (!conversation.title.startsWith('New ')) return;
+
+    const now = new Date().toISOString();
+    const updated: ConversationRecord = { ...conversation, title, updatedAt: now };
+    this.db.updateConversation(updated);
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: 'conversation.updated',
+      payload: { action: 'title_generated', title },
+      createdAt: now,
     });
   }
 

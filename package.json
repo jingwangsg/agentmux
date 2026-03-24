@@ -9,7 +9,9 @@
     "build": "npm run build -w @agentmux/server && npm run build -w @agentmux/web",
     "dev": "concurrently \"npm run dev -w @agentmux/server\" \"npm run dev -w @agentmux/web\"",
     "lint": "npm run lint -w @agentmux/server && npm run lint -w @agentmux/web",
-    "smoke": "tsx scripts/smoke-test.mts"
+    "smoke": "tsx scripts/smoke-test.mts",
+    "e2e": "tsx scripts/e2e/runner.mts",
+    "test": "npm run test -w @agentmux/server"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

@@ -27,6 +27,8 @@ export const rewindSchema = z.object({
   message: z.string().optional(),
   userMessageId: z.string().optional(),
   dryRun: z.boolean().optional(),
+  fork: z.boolean().optional(),
+  rewindCode: z.boolean().optional(),
 });
 
 export const wsMessageSchema = z.object({

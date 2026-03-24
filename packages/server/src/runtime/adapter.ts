@@ -7,8 +7,16 @@ export interface RuntimeEventSink {
   emitInteractiveRequest(conversationId: string, payload: Record<string, unknown>): void;
   emitToolCall(conversationId: string, payload: Record<string, unknown>): void;
   emitToolOutput(conversationId: string, payload: Record<string, unknown>): void;
+  emitToolResult(conversationId: string, payload: Record<string, unknown>): void;
+  emitPlanMessage(conversationId: string, payload: Record<string, unknown>): void;
+  emitCodexItem(conversationId: string, payload: Record<string, unknown>): void;
+  emitCodexRequest(conversationId: string, payload: Record<string, unknown>): void;
+  emitClaudeStep(conversationId: string, payload: Record<string, unknown>): void;
   emitApprovalRequest(conversationId: string, payload: Record<string, unknown>): void;
   emitError(conversationId: string, message: string): void;
+  emitResumeHandle(conversationId: string, handle: Record<string, unknown>): void;
+  emitTitleUpdate(conversationId: string, title: string): void;
+  emitTokenUsage(conversationId: string, payload: Record<string, unknown>): void;
 }
 
 export interface RuntimeAdapter {

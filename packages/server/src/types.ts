@@ -24,7 +24,13 @@ export type EventType =
   | 'interactive.response'
   | 'tool.call'
   | 'tool.output'
+  | 'tool.result'
+  | 'plan.message'
+  | 'codex.item'
+  | 'codex.request'
+  | 'claude.step'
   | 'approval.request'
+  | 'token_usage'
   | 'error';
 
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';

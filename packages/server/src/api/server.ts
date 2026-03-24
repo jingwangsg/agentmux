@@ -43,6 +43,26 @@ export function createServer(conversationManager: ConversationManager) {
     res.json({ conversation });
   });
 
+  app.patch('/api/conversations/:id', (req, res, next) => {
+    try {
+      const { title, config } = req.body as { title?: string; config?: Record<string, unknown> };
+      let conversation = conversationManager.getConversation(req.params.id);
+      if (!conversation) {
+        res.status(404).json({ error: 'Conversation not found' });
+        return;
+      }
+      if (typeof title === 'string') {
+        conversation = conversationManager.updateConversationTitle(req.params.id, title);
+      }
+      if (config && typeof config === 'object') {
+        conversation = conversationManager.updateConversationConfig(req.params.id, config);
+      }
+      res.json({ conversation });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.patch('/api/conversations/:id/config', (req, res, next) => {
     try {
       const parsed = updateConversationConfigSchema.parse(req.body);
@@ -102,10 +122,30 @@ export function createServer(conversationManager: ConversationManager) {
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });
   const subscriptions = new Map<WebSocket, Set<string>>();
+  const aliveMap = new Map<WebSocket, boolean>();
+
+  // Ping/pong to detect dead connections
+  const pingInterval = setInterval(() => {
+    for (const [socket] of subscriptions) {
+      if (aliveMap.get(socket) === false) {
+        subscriptions.delete(socket);
+        aliveMap.delete(socket);
+        socket.terminate();
+        continue;
+      }
+      aliveMap.set(socket, false);
+      socket.ping();
+    }
+  }, 30_000);
+
+  wss.on('close', () => clearInterval(pingInterval));
 
   wss.on('connection', (socket) => {
     subscriptions.set(socket, new Set());
+    aliveMap.set(socket, true);
     socket.send(JSON.stringify({ type: 'server.ready' }));
+
+    socket.on('pong', () => aliveMap.set(socket, true));
 
     socket.on('message', async (buffer) => {
       try {
@@ -153,6 +193,7 @@ export function createServer(conversationManager: ConversationManager) {
 
     socket.on('close', () => {
       subscriptions.delete(socket);
+      aliveMap.delete(socket);
     });
   });
 

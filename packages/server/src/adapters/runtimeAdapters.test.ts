@@ -26,8 +26,16 @@ function createSink() {
     emitInteractiveRequest: (...args) => void calls.push({ kind: 'interactive', args }),
     emitToolCall: (...args) => void calls.push({ kind: 'tool_call', args }),
     emitToolOutput: (...args) => void calls.push({ kind: 'tool_output', args }),
+    emitToolResult: (...args) => void calls.push({ kind: 'tool_result', args }),
+    emitPlanMessage: (...args) => void calls.push({ kind: 'plan', args }),
+    emitCodexItem: (...args) => void calls.push({ kind: 'codex_item', args }),
+    emitCodexRequest: (...args) => void calls.push({ kind: 'codex_request', args }),
+    emitClaudeStep: (...args) => void calls.push({ kind: 'claude_step', args }),
     emitApprovalRequest: (...args) => void calls.push({ kind: 'approval', args }),
     emitError: (...args) => void calls.push({ kind: 'error', args }),
+    emitResumeHandle: (...args) => void calls.push({ kind: 'resume_handle', args }),
+    emitTitleUpdate: (...args) => void calls.push({ kind: 'title_update', args }),
+    emitTokenUsage: (...args) => void calls.push({ kind: 'token_usage', args }),
   };
   return { sink, calls };
 }
@@ -52,7 +60,12 @@ function autoReplyJsonRpc(child: MockChildProcess): string[] {
     const line = String(chunk);
     writes.push(line);
     for (const rawLine of line.split('\n').filter(Boolean)) {
-      const message = JSON.parse(rawLine) as { id?: number; method?: string };
+      let message: { id?: number; method?: string; type?: string };
+      try {
+        message = JSON.parse(rawLine) as { id?: number; method?: string; type?: string };
+      } catch {
+        continue;
+      }
       if (typeof message.id !== 'number') {
         continue;
       }
@@ -81,7 +94,8 @@ describe('Runtime adapters with mocked processes', () => {
     await adapter.rewind(conversation, { userMessageId: 'm1', dryRun: true }, sink);
 
     expect(spawnMock).toHaveBeenCalledTimes(1);
-    expect(writes.some((line) => line.includes('"content":"hello"'))).toBe(true);
+    // Message format now uses structured content blocks
+    expect(writes.some((line) => line.includes('"text":"hello"'))).toBe(true);
     expect(writes.some((line) => line.includes('"type":"rewind_code"'))).toBe(true);
   });
 
@@ -98,9 +112,13 @@ describe('Runtime adapters with mocked processes', () => {
     expect(args).toBeDefined();
     expect(args).toContain('--model');
     expect(args).toContain('sonnet');
+    // New flags should be present
+    expect(args).toContain('--input-format');
+    expect(args).toContain('--thinking');
   });
 
   it('Claude adapter propagates stdout/stderr/close and cancel', async () => {
+    vi.useFakeTimers();
     const child = new MockChildProcess();
     const spawnMock = vi.fn(() => child as unknown as never);
     const adapter = new ClaudeCliAdapter(spawnMock as never);
@@ -112,14 +130,18 @@ describe('Runtime adapters with mocked processes', () => {
     child.stderr.write('Ignoring extra certs from /etc/ssl/certs/npm-bundle.crt, load failed\n');
     child.stderr.write('fatal stderr boom\n');
     await adapter.cancel(conversation.id);
+    // Cancel now uses a delayed SIGINT — advance timers to trigger it
+    vi.advanceTimersByTime(600);
     child.emit('close');
 
     expect(calls.some((call) => call.kind === 'tool_call')).toBe(true);
     expect(calls.some((call) => call.kind === 'approval')).toBe(true);
     expect(calls.some((call) => call.kind === 'error' && String(call.args[1]).includes('fatal stderr boom'))).toBe(true);
+    // 'Ignoring extra certs' is now filtered out as noise — should NOT appear as error
     expect(calls.some((call) => call.kind === 'error' && String(call.args[1]).includes('Ignoring extra certs'))).toBe(false);
     expect(child.killed).toBe(true);
     expect(calls.some((call) => call.kind === 'state' && call.args[1] === 'stopped')).toBe(true);
+    vi.useRealTimers();
   });
 
   it('Codex adapter initializes process and writes rollback/turn-start on rewind', async () => {
@@ -182,5 +204,20 @@ describe('Runtime adapters with mocked processes', () => {
     expect(turnStart).toContain('gpt-5.4-mini');
     expect(turnStart).toContain('high');
     expect(turnStart).toContain('plan');
+  });
+
+  it('Codex adapter handles thread title and token usage notifications', async () => {
+    const child = new MockChildProcess();
+    const spawnMock = vi.fn(() => child as unknown as never);
+    const adapter = new CodexCliAdapter(spawnMock as never);
+    const { sink, calls } = createSink();
+    autoReplyJsonRpc(child);
+
+    await adapter.resume({ ...conversation, backend: 'codex' }, sink);
+    child.stdout.write(JSON.stringify({ method: 'thread/name/updated', params: { threadName: 'My Chat' } }) + '\n');
+    child.stdout.write(JSON.stringify({ method: 'thread/tokenUsage/updated', params: { input: 100, output: 50 } }) + '\n');
+
+    expect(calls.some((call) => call.kind === 'title_update' && call.args[1] === 'My Chat')).toBe(true);
+    expect(calls.some((call) => call.kind === 'token_usage')).toBe(true);
   });
 });

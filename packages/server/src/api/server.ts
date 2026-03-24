@@ -2,7 +2,7 @@ import http from 'node:http';
 import express from 'express';
 import cors from 'cors';
 import WebSocket, { WebSocketServer } from 'ws';
-import { createConversationSchema, controlSchema, messageSchema, rewindSchema, wsMessageSchema } from './schemas.js';
+import { createConversationSchema, controlSchema, messageSchema, rewindSchema, updateConversationConfigSchema, wsMessageSchema } from './schemas.js';
 import type { ConversationManager } from '../runtime/manager.js';
 import type { StoredEvent } from '../types.js';
 
@@ -19,6 +19,15 @@ export function createServer(conversationManager: ConversationManager) {
     res.json({ conversations: conversationManager.listConversations() });
   });
 
+  app.get('/api/backends/:backend/config-options', (req, res) => {
+    const backend = req.params.backend;
+    if (backend !== 'codex' && backend !== 'claude') {
+      res.status(404).json({ error: 'Backend not found' });
+      return;
+    }
+    res.json(conversationManager.getConfigCandidates(backend));
+  });
+
   app.post('/api/conversations', (req, res) => {
     const parsed = createConversationSchema.parse(req.body);
     const conversation = conversationManager.createConversation(parsed);
@@ -32,6 +41,16 @@ export function createServer(conversationManager: ConversationManager) {
       return;
     }
     res.json({ conversation });
+  });
+
+  app.patch('/api/conversations/:id/config', (req, res, next) => {
+    try {
+      const parsed = updateConversationConfigSchema.parse(req.body);
+      const conversation = conversationManager.updateConversationConfig(req.params.id, parsed.config);
+      res.json({ conversation });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get('/api/conversations/:id/events', (req, res) => {

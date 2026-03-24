@@ -42,6 +42,7 @@ export interface ConfigCandidate {
   label: string;
   description?: string;
   disabled?: boolean;
+  badge?: string;
 }
 
 export interface ConversationConfigCandidates {
@@ -68,6 +69,8 @@ export interface ConversationRecord {
   lastRuntimeStoppedAt: string | null;
 }
 
+export type Conversation = ConversationRecord;
+
 export interface StoredEvent<T = Record<string, unknown>> {
   id: string;
   conversationId: string;
@@ -75,6 +78,8 @@ export interface StoredEvent<T = Record<string, unknown>> {
   payload: T;
   createdAt: string;
 }
+
+export type ConversationEvent = StoredEvent<Record<string, unknown>>;
 
 export interface ConversationDetails extends ConversationRecord {
   events: StoredEvent[];

@@ -1,4 +1,4 @@
-import type { Conversation, ConversationEvent } from './types';
+import type { BackendType, Conversation, ConversationConfig, ConversationConfigCandidates, ConversationEvent } from './types';
 
 const baseUrl = import.meta.env.VITE_SERVER_URL ?? 'http://localhost:3001';
 const wsUrl = import.meta.env.VITE_WS_URL ?? 'ws://localhost:3001/ws';
@@ -9,11 +9,26 @@ export async function listConversations(): Promise<Conversation[]> {
   return data.conversations;
 }
 
-export async function createConversation(backend: 'codex' | 'claude'): Promise<Conversation> {
+export async function createConversation(backend: BackendType): Promise<Conversation> {
   const response = await fetch(`${baseUrl}/api/conversations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ backend }),
+  });
+  const data = await response.json();
+  return data.conversation;
+}
+
+export async function getConfigOptions(backend: BackendType): Promise<ConversationConfigCandidates> {
+  const response = await fetch(`${baseUrl}/api/backends/${backend}/config-options`);
+  return response.json();
+}
+
+export async function updateConversationConfig(conversationId: string, config: Partial<ConversationConfig>): Promise<Conversation> {
+  const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/config`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config }),
   });
   const data = await response.json();
   return data.conversation;

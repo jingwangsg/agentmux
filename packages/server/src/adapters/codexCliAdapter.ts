@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import type { RuntimeAdapter, RuntimeEventSink } from '../runtime/adapter.js';
 import type { ConversationRecord } from '../types.js';
+import { resolveConversationConfig } from '../runtime/config.js';
 
 export interface CodexSpawnProcess {
   (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; stdio: ['pipe', 'pipe', 'pipe'] }): ChildProcessWithoutNullStreams;
@@ -61,9 +62,7 @@ export function parseCodexNotification(message: Record<string, unknown>): CodexP
   }
 
   if (method === 'item/reasoning/textDelta' || method === 'item/reasoning/summaryTextDelta') {
-    const params = message.params as Record<string, unknown> | undefined;
-    const delta = typeof params?.delta === 'string' ? params.delta : JSON.stringify(params ?? {});
-    return { kind: 'delta', content: delta };
+    return { kind: 'ignore' };
   }
 
   if (method === 'item/tool/call') {
@@ -83,27 +82,67 @@ export function parseCodexNotification(message: Record<string, unknown>): CodexP
   }
 
   if (method.includes('error')) {
-    return { kind: 'error', message: JSON.stringify(message) };
+    return { kind: 'error', message: typeof message.error === 'string' ? message.error : 'Codex runtime error' };
   }
 
-  return { kind: 'delta', content: JSON.stringify(message) };
+  return { kind: 'ignore' };
+}
+
+function buildCodexRuntimeConfig(conversation: ConversationRecord): {
+  approvalPolicy: string;
+  sandbox: string;
+  collaborationMode: string | null;
+  model: string | null;
+  effort: string | null;
+  config: Record<string, unknown>;
+} {
+  const resolved = resolveConversationConfig('codex', conversation.config);
+  const isAutoAccept = resolved.mode === 'auto-accept';
+  return {
+    approvalPolicy: isAutoAccept ? 'never' : 'on-request',
+    sandbox: isAutoAccept ? 'danger-full-access' : 'workspace-write',
+    collaborationMode: resolved.mode === 'plan' ? 'plan' : null,
+    model: resolved.model || null,
+    effort: resolved.reasoningEffort || null,
+    config: {
+      model: resolved.model || null,
+      reasoning_effort: resolved.reasoningEffort || null,
+      mode: resolved.mode || null,
+    },
+  };
+}
+
+function looksLikeStructuredOutput(line: string): boolean {
+  return line.startsWith('{') || line.startsWith('[') || /^\w+[/:.-]+\s*[{[]/.test(line) || line.startsWith('DEBUG') || line.startsWith('INFO') || line.startsWith('TRACE');
+}
+
+function looksLikeReadableAssistantText(line: string): boolean {
+  if (!line.trim()) {
+    return false;
+  }
+  if (looksLikeStructuredOutput(line)) {
+    return false;
+  }
+  return /[A-Za-z\u4e00-\u9fff]/.test(line);
 }
 
 export function buildCodexTurnStartParams(conversation: ConversationRecord, content: string, threadId: string | null): Record<string, unknown> {
+  const runtime = buildCodexRuntimeConfig(conversation);
+
   return {
     threadId,
     input: [{ type: 'text', text: content, text_elements: [] }],
     cwd: conversation.cwd ?? process.cwd(),
-    approvalPolicy: null,
+    approvalPolicy: runtime.approvalPolicy,
     approvalsReviewer: 'user',
-    sandboxPolicy: null,
-    model: null,
+    sandboxPolicy: runtime.sandbox,
+    model: runtime.model,
     serviceTier: null,
-    effort: null,
+    effort: runtime.effort,
     summary: 'none',
     personality: null,
     outputSchema: null,
-    collaborationMode: null,
+    collaborationMode: runtime.collaborationMode,
     attachments: [],
   };
 }
@@ -141,34 +180,33 @@ export class CodexCliAdapter implements RuntimeAdapter {
 
     sink.emitState(conversation.id, 'running');
     const response = await this.sendRpc(handle, 'turn/start', buildCodexTurnStartParams(conversation, content, handle.threadId));
-    const result = response as { turn?: { id?: string }; output?: string; message?: string };
+    const result = response as { turn?: { id?: string } };
     handle.lastTurnId = result.turn?.id ?? handle.lastTurnId;
-    const finalText = result.output ?? result.message ?? `Codex turn started for ${conversation.id}`;
-    sink.emitFinal(conversation.id, finalText);
-    sink.emitState(conversation.id, 'completed');
   }
 
   public async resume(conversation: ConversationRecord, sink: RuntimeEventSink): Promise<void> {
     const handle = await this.ensureProcess(conversation, sink);
+    if (!handle.threadId) {
+      await this.startThread(conversation, handle);
+      sink.emitState(conversation.id, 'idle', 'Codex thread started');
+      return;
+    }
+
     try {
-      const response = await this.sendRpc(handle, 'thread/resume', {
-        threadId: conversation.id,
-        history: null,
-        path: null,
-        model: null,
-        modelProvider: null,
-        serviceTier: null,
+      const runtime = buildCodexRuntimeConfig(conversation);
+      const response = await this.sendRpc(handle, 'thread/attach', {
+        threadId: handle.threadId,
         cwd: conversation.cwd ?? process.cwd(),
-        approvalPolicy: 'on-request',
-        sandbox: 'workspace-write',
-        config: {},
+        approvalPolicy: runtime.approvalPolicy,
+        sandbox: runtime.sandbox,
+        config: runtime.config,
         baseInstructions: null,
         developerInstructions: null,
         personality: null,
         persistExtendedHistory: false,
       });
       const result = response as { thread?: { id?: string; threadId?: string } };
-      handle.threadId = result.thread?.id ?? result.thread?.threadId ?? conversation.id;
+      handle.threadId = result.thread?.id ?? result.thread?.threadId ?? handle.threadId;
       sink.emitState(conversation.id, 'idle', 'Codex runtime attached');
     } catch {
       await this.startThread(conversation, handle);
@@ -242,8 +280,12 @@ export class CodexCliAdapter implements RuntimeAdapter {
 
     const stderr = createInterface({ input: child.stderr });
     stderr.on('line', (line) => {
-      if (line.trim()) {
-        sink.emitError(conversation.id, line.trim());
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return;
+      }
+      if (/\b(error|failed|fatal|exception)\b/i.test(trimmed)) {
+        sink.emitError(conversation.id, trimmed);
       }
     });
 
@@ -263,17 +305,18 @@ export class CodexCliAdapter implements RuntimeAdapter {
   }
 
   private async startThread(conversation: ConversationRecord, handle: CodexHandle): Promise<void> {
+    const runtime = buildCodexRuntimeConfig(conversation);
     const response = await this.sendRpc(handle, 'thread/start', {
       cwd: conversation.cwd ?? process.cwd(),
-      model: null,
+      model: runtime.model,
       modelProvider: null,
       serviceTier: null,
       approvalsReviewer: 'user',
-      config: {},
-      approvalPolicy: 'on-request',
+      config: runtime.config,
+      approvalPolicy: runtime.approvalPolicy,
       baseInstructions: null,
       developerInstructions: null,
-      sandbox: 'workspace-write',
+      sandbox: runtime.sandbox,
       personality: null,
       ephemeral: null,
       mockExperimentalField: null,
@@ -349,7 +392,13 @@ export class CodexCliAdapter implements RuntimeAdapter {
           return;
       }
     } catch {
-      sink.emitDelta(conversationId, trimmed);
+      if (looksLikeReadableAssistantText(trimmed)) {
+        sink.emitDelta(conversationId, trimmed);
+        return;
+      }
+      if (!looksLikeStructuredOutput(trimmed)) {
+        sink.emitToolOutput(conversationId, { message: trimmed, source: 'codex.stdout' });
+      }
     }
   }
 }

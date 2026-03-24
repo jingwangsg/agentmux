@@ -74,4 +74,50 @@ describe('HTTP API', () => {
       .send({ message: 'edited prompt' })
       .expect(202);
   });
+
+  it('returns config options and updates conversation config', async () => {
+    const app = buildApp();
+
+    const optionsResponse = await request(app)
+      .get('/api/backends/codex/config-options')
+      .expect(200);
+
+    expect(optionsResponse.body.backend).toBe('codex');
+    expect(optionsResponse.body.candidates.model.length).toBeGreaterThan(0);
+    expect(optionsResponse.body.candidates.mode.map((candidate: { value: string }) => candidate.value)).toEqual(
+      expect.arrayContaining(['default', 'plan', 'auto-accept']),
+    );
+
+    const createResponse = await request(app)
+      .post('/api/conversations')
+      .send({ backend: 'codex' })
+      .expect(201);
+
+    const conversationId = createResponse.body.conversation.id;
+
+    const updateResponse = await request(app)
+      .patch(`/api/conversations/${conversationId}/config`)
+      .send({ config: { model: 'gpt-5.4-mini', reasoningEffort: 'high', mode: 'plan' } })
+      .expect(200);
+
+    expect(updateResponse.body.conversation.config.model).toBe('gpt-5.4-mini');
+    expect(updateResponse.body.conversation.config.reasoningEffort).toBe('high');
+    expect(updateResponse.body.conversation.config.mode).toBe('plan');
+  });
+});
+
+
+describe('Backend config option variants', () => {
+  it('returns claude native mode candidates', async () => {
+    const app = buildApp();
+
+    const response = await request(app)
+      .get('/api/backends/claude/config-options')
+      .expect(200);
+
+    expect(response.body.backend).toBe('claude');
+    expect(response.body.candidates.mode.map((candidate: { value: string }) => candidate.value)).toEqual(
+      expect.arrayContaining(['default', 'plan', 'acceptEdits', 'bypassPermissions']),
+    );
+  });
 });

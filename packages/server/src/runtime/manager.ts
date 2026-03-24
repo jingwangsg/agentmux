@@ -1,7 +1,10 @@
 import { nanoid } from 'nanoid';
 import type { AgentMuxDatabase } from '../db/database.js';
+import { getConversationConfigCandidates, normalizeConversationConfig } from './config.js';
 import type {
   ControlInput,
+  ConversationConfig,
+  ConversationConfigCandidates,
   ConversationRecord,
   CreateConversationInput,
   StoredEvent,
@@ -29,6 +32,10 @@ export class ConversationManager implements RuntimeEventSink {
     return this.db.listEvents(conversationId, cursor);
   }
 
+  public getConfigCandidates(backend: ConversationRecord['backend']): ConversationConfigCandidates {
+    return getConversationConfigCandidates(backend);
+  }
+
   public createConversation(input: CreateConversationInput): ConversationRecord {
     const now = new Date().toISOString();
     const conversation: ConversationRecord = {
@@ -37,7 +44,7 @@ export class ConversationManager implements RuntimeEventSink {
       title: input.title?.trim() || `New ${input.backend === 'codex' ? 'Codex' : 'Claude'} Conversation`,
       runtimeState: 'idle',
       cwd: input.cwd ?? null,
-      config: input.config ?? {},
+      config: normalizeConversationConfig(input.backend, input.config),
       resumeHandle: { backend: input.backend },
       createdAt: now,
       updatedAt: now,
@@ -54,6 +61,28 @@ export class ConversationManager implements RuntimeEventSink {
       createdAt: now,
     });
     return conversation;
+  }
+
+  public updateConversationConfig(conversationId: string, patch: Partial<ConversationConfig>): ConversationRecord {
+    const conversation = this.requireConversation(conversationId);
+    const now = new Date().toISOString();
+    const updated: ConversationRecord = {
+      ...conversation,
+      config: normalizeConversationConfig(conversation.backend, {
+        ...conversation.config,
+        ...patch,
+      }),
+      updatedAt: now,
+    };
+    this.db.updateConversation(updated);
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: 'conversation.updated',
+      payload: { action: 'config_updated', config: updated.config },
+      createdAt: now,
+    });
+    return updated;
   }
 
   public async ensureRuntime(conversationId: string): Promise<void> {
@@ -130,7 +159,6 @@ export class ConversationManager implements RuntimeEventSink {
       await this.ensureRuntime(conversationId);
     }
   }
-
 
   public async rewind(conversationId: string, payload: Record<string, unknown>): Promise<void> {
     const conversation = this.requireConversation(conversationId);

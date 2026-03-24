@@ -85,6 +85,21 @@ describe('Runtime adapters with mocked processes', () => {
     expect(writes.some((line) => line.includes('"type":"rewind_code"'))).toBe(true);
   });
 
+  it('Claude adapter passes configured model to process args', async () => {
+    const child = new MockChildProcess();
+    const spawnMock = vi.fn(() => child as unknown as never);
+    const adapter = new ClaudeCliAdapter(spawnMock as never);
+    const { sink } = createSink();
+
+    await adapter.resume({ ...conversation, config: { model: 'sonnet' } }, sink);
+
+    const firstCall = spawnMock.mock.calls[0] as unknown[] | undefined;
+    const args = (firstCall?.[1] ?? undefined) as string[] | undefined;
+    expect(args).toBeDefined();
+    expect(args).toContain('--model');
+    expect(args).toContain('sonnet');
+  });
+
   it('Claude adapter propagates stdout/stderr/close and cancel', async () => {
     const child = new MockChildProcess();
     const spawnMock = vi.fn(() => child as unknown as never);
@@ -141,5 +156,29 @@ describe('Runtime adapters with mocked processes', () => {
     expect(calls.some((call) => call.kind === 'tool_output')).toBe(true);
     expect(calls.some((call) => call.kind === 'state' && call.args[1] === 'stopped')).toBe(true);
     expect(writes.some((line) => line.includes('\"method\":\"turn/interrupt\"'))).toBe(true);
+  });
+
+  it('Codex adapter applies config to turn/start params', async () => {
+    const child = new MockChildProcess();
+    const spawnMock = vi.fn(() => child as unknown as never);
+    const adapter = new CodexCliAdapter(spawnMock as never);
+    const { sink } = createSink();
+    const writes = autoReplyJsonRpc(child);
+
+    await adapter.resume({
+      ...conversation,
+      backend: 'codex',
+      config: { model: 'gpt-5.4-mini', reasoningEffort: 'high', mode: 'plan' },
+    }, sink);
+    await adapter.sendMessage({
+      ...conversation,
+      backend: 'codex',
+      config: { model: 'gpt-5.4-mini', reasoningEffort: 'high', mode: 'plan' },
+    }, 'hello', sink);
+
+    const turnStart = writes.find((line) => line.includes('"method":"turn/start"')) ?? '';
+    expect(turnStart).toContain('gpt-5.4-mini');
+    expect(turnStart).toContain('high');
+    expect(turnStart).toContain('plan');
   });
 });

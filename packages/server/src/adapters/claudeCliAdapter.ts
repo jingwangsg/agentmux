@@ -150,6 +150,9 @@ export class ClaudeCliAdapter implements RuntimeAdapter {
 
     const executable = process.env.CLAUDE_CODE_EXECUTABLE ?? 'claude';
     const args = ['--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose'];
+    if (typeof conversation.config.model === 'string' && conversation.config.model && conversation.config.model !== 'default') {
+      args.push('--model', conversation.config.model);
+    }
     if (conversation.cwd) {
       args.push('--add-dir', conversation.cwd);
     }

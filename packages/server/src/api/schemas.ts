@@ -7,6 +7,14 @@ export const createConversationSchema = z.object({
   config: z.record(z.unknown()).optional(),
 });
 
+export const updateConversationConfigSchema = z.object({
+  config: z.object({
+    model: z.string().min(1).optional(),
+    reasoningEffort: z.string().min(1).optional(),
+    mode: z.string().min(1).optional(),
+  }),
+});
+
 export const messageSchema = z.object({
   content: z.string().min(1),
 });

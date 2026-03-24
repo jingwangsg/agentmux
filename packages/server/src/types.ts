@@ -42,6 +42,7 @@ export interface ConfigCandidate {
   label: string;
   description?: string;
   disabled?: boolean;
+  badge?: string;
 }
 
 export interface ConversationConfigCandidates {

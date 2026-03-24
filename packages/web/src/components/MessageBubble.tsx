@@ -157,7 +157,11 @@ export default function MessageBubble({ item, backend, onRewind, onCopy, onActio
   if (item.kind === 'tool') {
     return (
       <details className="tool-section" open={!item.collapsed}>
-        <summary>{item.title}{item.body ? `: ${item.body.slice(0, 80)}` : ''}</summary>
+        <summary>
+          <span className="tool-status-dot" />
+          {item.title}
+        </summary>
+        {item.body ? <div className="tool-section-body tool-preview">{item.body.slice(0, 200)}</div> : null}
         {item.details ? <pre className="tool-section-body">{item.details}</pre> : null}
       </details>
     );
@@ -205,7 +209,7 @@ export default function MessageBubble({ item, backend, onRewind, onCopy, onActio
           <span className="subagent-badge active" />
           {item.title}
         </summary>
-        {item.body ? <div className="tool-section-body">{item.body}</div> : null}
+        {item.body ? <div className="tool-section-body tool-preview">{item.body.slice(0, 200)}</div> : null}
         {item.details ? <pre className="tool-section-body">{item.details}</pre> : null}
       </details>
     );

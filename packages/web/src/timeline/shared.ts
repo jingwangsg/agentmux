@@ -43,6 +43,15 @@ export function readPayloadText(payload: Record<string, unknown>): string {
   return '';
 }
 
+export function extractToolLabel(payload: Record<string, unknown>): { label: string; preview: string } {
+  const toolName = payload.tool_name ?? payload.tool;
+  const input = (payload.tool_input ?? payload.input ?? payload.args ?? {}) as Record<string, unknown>;
+  const name = typeof toolName === 'string' ? toolName : '';
+  const previewField = input.file_path ?? input.command ?? input.pattern ?? input.description ?? input.prompt;
+  const preview = typeof previewField === 'string' ? previewField : '';
+  return { label: name || 'Tool', preview };
+}
+
 export function summarizeRuntimeState(payload: Record<string, unknown>): string | null {
   const state = typeof payload.state === 'string' ? payload.state : '';
   const detail = typeof payload.detail === 'string' ? payload.detail : '';

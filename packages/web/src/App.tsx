@@ -44,7 +44,11 @@ function getInitialTheme(): Theme {
 }
 
 function getCandidateLabel(candidates: ConfigCandidate[], value: string): string {
-  return candidates.find((c) => c.value === value)?.label ?? value;
+  const found = candidates.find((c) => c.value === value);
+  if (found) return found.label;
+  // Fallback: strip provider prefix, titleize
+  const bare = value.includes('/') ? value.slice(value.lastIndexOf('/') + 1) : value;
+  return bare.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function buildTimelineForBackend(backend: BackendType, events: ConversationEvent[]): TimelineItem[] {
@@ -65,7 +69,7 @@ export default function App() {
   const [wsState, setWsState] = useState<WsState>('connecting');
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [editingTitleValue, setEditingTitleValue] = useState('');
-  const [modelOpen, setModelOpen] = useState(false);
+  const [openSelector, setOpenSelector] = useState<'model' | 'reasoning' | 'mode' | null>(null);
   const connRef = useRef<ReturnType<typeof createReconnectingSocket> | null>(null);
   const activeIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -163,6 +167,16 @@ export default function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [visibleTimeline]);
+
+  // Click-outside closes selector popovers
+  useEffect(() => {
+    if (!openSelector) return;
+    const handler = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest('[data-selector-popover]')) setOpenSelector(null);
+    };
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [openSelector]);
 
   // Handlers
   async function handleCreateConversation(backend: BackendType) {
@@ -352,6 +366,19 @@ export default function App() {
                     onCompositionStart={() => setIsComposing(true)}
                     onCompositionEnd={() => setIsComposing(false)}
                     onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        void handleControl('cancel');
+                        return;
+                      }
+                      if (e.key === 'Tab' && e.shiftKey && activeOptions && !isUpdatingConfig) {
+                        e.preventDefault();
+                        const modes = activeOptions.candidates.mode;
+                        const idx = modes.findIndex((c) => c.value === resolvedConfig.mode);
+                        const next = modes[(idx + 1) % modes.length];
+                        if (next) void handleConfigChange({ mode: next.value });
+                        return;
+                      }
                       if (e.key !== 'Enter' || e.shiftKey) return;
                       const ne = e.nativeEvent as KeyboardEvent & { isComposing?: boolean; keyCode?: number };
                       if (isComposing || ne.isComposing || ne.keyCode === 229) return;
@@ -364,40 +391,53 @@ export default function App() {
                   <div className="composer-toolbar">
                     <div className="composer-selectors">
                       {activeOptions ? (
-                        <div className="model-pill-wrapper" data-selector-popover>
-                          <button className="model-pill" onClick={() => setModelOpen(!modelOpen)} disabled={isUpdatingConfig}>
-                            {getCandidateLabel(activeOptions.candidates.model, resolvedConfig.model)}
-                            {' · '}
-                            {getCandidateLabel(activeOptions.candidates.reasoningEffort, resolvedConfig.reasoningEffort)}
-                            {' · '}
-                            {getCandidateLabel(activeOptions.candidates.mode, resolvedConfig.mode)}
-                          </button>
-                          {modelOpen ? (
-                            <div className="selector-popover">
-                              <div className="selector-popover-title">Model</div>
-                              {activeOptions.candidates.model.map((c) => (
-                                <button key={c.value} className={`selector-option ${c.value === resolvedConfig.model ? 'active' : ''}`}
-                                  onClick={() => { void handleConfigChange({ model: c.value }); setModelOpen(false); }} disabled={c.disabled}>
-                                  {c.label}{c.badge ? <span className="selector-badge">{c.badge}</span> : null}
-                                </button>
-                              ))}
-                              <div className="selector-popover-title">Reasoning</div>
-                              {activeOptions.candidates.reasoningEffort.map((c) => (
-                                <button key={c.value} className={`selector-option ${c.value === resolvedConfig.reasoningEffort ? 'active' : ''}`}
-                                  onClick={() => { void handleConfigChange({ reasoningEffort: c.value }); setModelOpen(false); }}>
-                                  {c.label}
-                                </button>
-                              ))}
-                              <div className="selector-popover-title">Mode</div>
-                              {activeOptions.candidates.mode.map((c) => (
-                                <button key={c.value} className={`selector-option ${c.value === resolvedConfig.mode ? 'active' : ''}`}
-                                  onClick={() => { void handleConfigChange({ mode: c.value }); setModelOpen(false); }}>
-                                  {c.label}
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
+                        <>
+                          <div className="pill-wrapper" data-selector-popover>
+                            <button className="config-pill" onClick={() => setOpenSelector(openSelector === 'model' ? null : 'model')} disabled={isUpdatingConfig}>
+                              {getCandidateLabel(activeOptions.candidates.model, resolvedConfig.model)}
+                            </button>
+                            {openSelector === 'model' ? (
+                              <div className="selector-popover">
+                                {activeOptions.candidates.model.map((c) => (
+                                  <button key={c.value} className={`selector-option ${c.value === resolvedConfig.model ? 'active' : ''}`}
+                                    onClick={() => { void handleConfigChange({ model: c.value }); setOpenSelector(null); }} disabled={c.disabled}>
+                                    {c.label}{c.badge ? <span className="selector-badge">{c.badge}</span> : null}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="pill-wrapper" data-selector-popover>
+                            <button className="config-pill" onClick={() => setOpenSelector(openSelector === 'reasoning' ? null : 'reasoning')} disabled={isUpdatingConfig}>
+                              {getCandidateLabel(activeOptions.candidates.reasoningEffort, resolvedConfig.reasoningEffort)}
+                            </button>
+                            {openSelector === 'reasoning' ? (
+                              <div className="selector-popover">
+                                {activeOptions.candidates.reasoningEffort.map((c) => (
+                                  <button key={c.value} className={`selector-option ${c.value === resolvedConfig.reasoningEffort ? 'active' : ''}`}
+                                    onClick={() => { void handleConfigChange({ reasoningEffort: c.value }); setOpenSelector(null); }}>
+                                    {c.label}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="pill-wrapper" data-selector-popover>
+                            <button className={`config-pill ${resolvedConfig.mode === 'plan' ? 'mode-plan' : resolvedConfig.mode !== 'default' ? 'mode-auto' : ''}`} onClick={() => setOpenSelector(openSelector === 'mode' ? null : 'mode')} disabled={isUpdatingConfig}>
+                              {getCandidateLabel(activeOptions.candidates.mode, resolvedConfig.mode)}
+                            </button>
+                            {openSelector === 'mode' ? (
+                              <div className="selector-popover">
+                                {activeOptions.candidates.mode.map((c) => (
+                                  <button key={c.value} className={`selector-option ${c.value === resolvedConfig.mode ? 'active' : ''}`}
+                                    onClick={() => { void handleConfigChange({ mode: c.value }); setOpenSelector(null); }}>
+                                    {c.label}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        </>
                       ) : null}
                     </div>
                     <button className="send-button" disabled={!activeId || !draft.trim()} onClick={() => void handleSend()} aria-label="Send">&#8593;</button>

@@ -1,5 +1,5 @@
 import type { StoredEvent as ConversationEvent } from '../lib/types';
-import { readPayloadText, stringifyDetails, summarizeRuntimeState, type TimelineItem } from './shared';
+import { extractToolLabel, readPayloadText, stringifyDetails, summarizeRuntimeState, type TimelineItem } from './shared';
 
 function requestActions(): TimelineItem['actions'] {
   return [
@@ -52,10 +52,14 @@ export function buildCodexTimeline(events: ConversationEvent[]): TimelineItem[] 
     if (event.type === 'codex.item') {
       const itemType = typeof event.payload.itemType === 'string' ? event.payload.itemType : 'item';
       const stage = typeof event.payload.stage === 'string' ? event.payload.stage : 'updated';
+      const toolInfo = extractToolLabel(event.payload);
+      const title = toolInfo.label !== 'Tool'
+        ? `${toolInfo.label}${toolInfo.preview ? `: ${toolInfo.preview}` : ''}`
+        : `${itemType.replace(/_/g, ' ')} · ${stage}`;
       items.push({
         id: event.id,
         kind: itemType === 'reasoning' ? 'plan' : 'tool',
-        title: `${itemType.replace(/_/g, ' ')} · ${stage}`,
+        title,
         body: readPayloadText(event.payload) || undefined,
         details: stringifyDetails(event.payload),
         event,
@@ -79,10 +83,14 @@ export function buildCodexTimeline(events: ConversationEvent[]): TimelineItem[] 
     }
 
     if (event.type === 'tool.call' || event.type === 'tool.output' || event.type === 'tool.result') {
+      const toolInfo = extractToolLabel(event.payload);
+      const title = event.type === 'tool.call'
+        ? `${toolInfo.label}${toolInfo.preview ? `: ${toolInfo.preview}` : ''}`
+        : event.type === 'tool.result' ? `${toolInfo.label} result` : `${toolInfo.label} output`;
       items.push({
         id: event.id,
         kind: 'tool',
-        title: event.type,
+        title,
         body: readPayloadText(event.payload) || undefined,
         details: stringifyDetails(event.payload),
         event,

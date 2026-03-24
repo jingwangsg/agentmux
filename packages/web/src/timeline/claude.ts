@@ -1,5 +1,5 @@
 import type { StoredEvent as ConversationEvent } from '../lib/types';
-import { readPayloadText, stringifyDetails, summarizeRuntimeState, type TimelineItem } from './shared';
+import { extractToolLabel, readPayloadText, stringifyDetails, summarizeRuntimeState, type TimelineItem } from './shared';
 
 export function buildClaudeTimeline(events: ConversationEvent[]): TimelineItem[] {
   const items: TimelineItem[] = [];
@@ -72,7 +72,11 @@ export function buildClaudeTimeline(events: ConversationEvent[]): TimelineItem[]
     }
 
     if (event.type === 'tool.call' || event.type === 'tool.result') {
-      items.push({ id: event.id, kind: 'tool', title: event.type, body: readPayloadText(event.payload) || undefined, details: stringifyDetails(event.payload), event, collapsed: true });
+      const toolInfo = extractToolLabel(event.payload);
+      const title = event.type === 'tool.call'
+        ? `${toolInfo.label}${toolInfo.preview ? `: ${toolInfo.preview}` : ''}`
+        : `${toolInfo.label} result`;
+      items.push({ id: event.id, kind: 'tool', title, body: readPayloadText(event.payload) || undefined, details: stringifyDetails(event.payload), event, collapsed: true });
       continue;
     }
 

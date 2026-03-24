@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import type { RuntimeAdapter, RuntimeEventSink } from '../runtime/adapter.js';
+import { resolveConversationConfig } from '../runtime/config.js';
 import type { ConversationRecord } from '../types.js';
 
 export interface ClaudeSpawnProcess {
@@ -254,8 +255,15 @@ export class ClaudeCliAdapter implements RuntimeAdapter {
       '--output-format', 'stream-json',
       '--input-format', 'stream-json',
       '--verbose',
-      '--thinking', 'adaptive',
     ];
+
+    // Reasoning effort → --thinking flag
+    const resolved = resolveConversationConfig('claude', conversation.config);
+    if (resolved.reasoningEffort === 'low') {
+      args.push('--thinking', 'disabled');
+    } else {
+      args.push('--thinking', 'adaptive');
+    }
 
     // Model
     if (typeof conversation.config.model === 'string' && conversation.config.model && conversation.config.model !== 'default') {

@@ -781,6 +781,14 @@ body {
   transform: rotate(90deg);
 }
 
+.tool-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+}
+
 .tool-section-body {
   padding: 0 14px 10px;
   font-family: var(--font-mono);
@@ -791,6 +799,15 @@ body {
   word-break: break-word;
   max-height: 300px;
   overflow-y: auto;
+}
+
+.tool-preview {
+  max-height: 3.6em;
+  overflow: hidden;
+}
+
+.tool-section[open] .tool-preview {
+  display: none;
 }
 
 .plan-section summary {
@@ -927,7 +944,6 @@ body {
   border: 1px solid var(--border-hover);
   border-radius: 24px;
   background: var(--bg-surface);
-  overflow: hidden;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
@@ -968,11 +984,11 @@ body {
   position: relative;
 }
 
-.model-pill-wrapper {
+.pill-wrapper {
   position: relative;
 }
 
-.model-pill {
+.config-pill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -987,12 +1003,22 @@ body {
   transition: background 0.12s;
 }
 
-.model-pill:hover {
+.config-pill:hover {
   background: var(--bg-elevated);
 }
 
-.model-pill:disabled {
+.config-pill:disabled {
   opacity: 0.4;
+}
+
+.config-pill.mode-plan {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.config-pill.mode-auto {
+  border-color: #3b82f6;
+  color: #3b82f6;
 }
 
 /* Selector popover (reused from model pill) */

@@ -32,7 +32,7 @@ const MINIMAL_MODEL_FALLBACKS: Record<BackendType, ConfigCandidate[]> = {
   ],
   claude: [
     { value: 'default', label: 'Default' },
-    { value: 'opus', label: 'Opus', description: 'Most capable for ambitious work.', badge: 'Upgrade' },
+    { value: 'opus', label: 'Opus', description: 'Most capable for ambitious work.' },
     { value: 'opus[1m]', label: 'Opus [1M]' },
     { value: 'sonnet', label: 'Sonnet', description: 'Most efficient for everyday tasks.' },
     { value: 'sonnet[1m]', label: 'Sonnet [1M]' },
@@ -126,7 +126,9 @@ function extractJsonArrayIfExists(filePath: string, key: string): unknown[] {
 }
 
 function titleizeModel(value: string): string {
-  return value
+  // Strip provider prefix (e.g. "openai/openai/gpt-5.4" → "gpt-5.4")
+  const bare = value.includes('/') ? value.slice(value.lastIndexOf('/') + 1) : value;
+  return bare
     .replace(/^claude-/, '')
     .replace(/^gpt-/, 'GPT-')
     .replace(/-/g, ' ')

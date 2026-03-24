@@ -8,11 +8,14 @@ export interface ClaudeSpawnProcess {
   (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; stdio: ['pipe', 'pipe', 'pipe'] }): ChildProcessWithoutNullStreams;
 }
 
+type ClaudePermissionMode = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions';
+
 interface ClaudeProcessHandle {
   process: ChildProcessWithoutNullStreams;
   ready: boolean;
   pendingRequestId: string | null;
   finalEmitted: boolean;
+  permissionMode: ClaudePermissionMode;
 }
 
 export type ClaudeParsedEvent =
@@ -24,7 +27,6 @@ export type ClaudeParsedEvent =
   | { kind: 'tool_result'; payload: Record<string, unknown> }
   | { kind: 'approval'; payload: Record<string, unknown> }
   | { kind: 'control_request'; subtype: string; requestId: string; payload: Record<string, unknown> }
-  | { kind: 'plan'; payload: Record<string, unknown> }
   | { kind: 'error'; message: string }
   | { kind: 'ignore' };
 
@@ -54,13 +56,6 @@ export function extractClaudeText(value: unknown): string {
     return value.text;
   }
   return '';
-}
-
-function looksLikePlanEvent(data: Record<string, unknown>, content: string): boolean {
-  const type = typeof data.type === 'string' ? data.type : '';
-  const subtype = typeof data.subtype === 'string' ? data.subtype : '';
-  const lower = content.toLowerCase();
-  return type.includes('plan') || subtype.includes('plan') || lower.includes('permit to execute') || lower.includes('plan mode');
 }
 
 function safeWrite(handle: ClaudeProcessHandle, data: string): boolean {
@@ -100,9 +95,6 @@ export function parseClaudeLine(line: string): ClaudeParsedEvent {
     }
 
     if (type === 'assistant' || type === 'message') {
-      if (looksLikePlanEvent(data, content) && content) {
-        return { kind: 'plan', payload: { ...data, content } };
-      }
       return content ? { kind: 'final', content } : { kind: 'ignore' };
     }
 
@@ -112,9 +104,6 @@ export function parseClaudeLine(line: string): ClaudeParsedEvent {
 
     if (type === 'result') {
       const sessionId = typeof data.session_id === 'string' ? data.session_id : undefined;
-      if (looksLikePlanEvent(data, content) && content) {
-        return { kind: 'plan', payload: { ...data, content } };
-      }
       return content
         ? { kind: 'final', content, sessionId }
         : { kind: 'state', state: 'completed' };
@@ -125,10 +114,7 @@ export function parseClaudeLine(line: string): ClaudeParsedEvent {
     }
 
     if (type === 'system') {
-      if (looksLikePlanEvent(data, content) && content) {
-        return { kind: 'plan', payload: { ...data, content } };
-      }
-      return { kind: 'state', state: 'waiting_input', detail: String(data.subtype ?? 'system') };
+      return { kind: 'ignore' };
     }
 
     if (type === 'tool_use') {
@@ -143,18 +129,12 @@ export function parseClaudeLine(line: string): ClaudeParsedEvent {
       return { kind: 'approval', payload: data };
     }
 
-    if (looksLikePlanEvent(data, content) && content) {
-      return { kind: 'plan', payload: { ...data, content } };
-    }
-
     return content ? { kind: 'delta', content } : { kind: 'ignore' };
   } catch {
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
       return { kind: 'ignore' };
     }
-    return trimmed.toLowerCase().includes('permit to execute')
-      ? { kind: 'plan', payload: { content: trimmed, raw: trimmed } }
-      : { kind: 'delta', content: trimmed };
+    return { kind: 'delta', content: trimmed };
   }
 }
 
@@ -214,15 +194,34 @@ export class ClaudeCliAdapter implements RuntimeAdapter {
 
     const requestId = handle.pendingRequestId;
     const action = typeof payload.action === 'string' ? payload.action : 'approve';
-    const behavior = action === 'deny' ? 'deny' : 'allow';
+    const requestKind = typeof payload.requestKind === 'string' ? payload.requestKind : 'approval';
 
-    // Send as control_response matching the extension's protocol
+    let responseBody: Record<string, unknown>;
+
+    if (requestKind === 'plan_exit') {
+      if (action === 'deny') {
+        responseBody = { behavior: 'deny', message: 'User chose to stay in plan mode and continue planning' };
+      } else {
+        responseBody = { behavior: 'allow' };
+        handle.permissionMode = 'acceptEdits';
+      }
+    } else if (requestKind === 'question') {
+      const userAnswer = typeof payload.userAnswer === 'string' ? payload.userAnswer : '';
+      const originalQuestion = typeof payload.originalQuestion === 'string' ? payload.originalQuestion : '';
+      responseBody = {
+        behavior: 'allow',
+        updatedInput: { question: originalQuestion, answer: userAnswer },
+      };
+    } else {
+      responseBody = { behavior: action === 'deny' ? 'deny' : 'allow' };
+    }
+
     const controlResponse = {
       type: 'control_response',
       response: {
         subtype: 'success',
         request_id: requestId ?? '',
-        response: { behavior, ...payload },
+        response: responseBody,
       },
     };
 
@@ -271,13 +270,17 @@ export class ClaudeCliAdapter implements RuntimeAdapter {
     }
 
     // Permission mode from conversation config.mode
-    const mode = typeof conversation.config.mode === 'string' ? conversation.config.mode : '';
-    if (mode === 'plan') {
-      args.push('--permission-mode', 'plan');
-    } else if (mode === 'acceptEdits') {
-      args.push('--permission-mode', 'acceptEdits');
-    } else if (mode === 'bypassPermissions') {
-      args.push('--permission-mode', 'bypassPermissions');
+    const configuredMode = typeof conversation.config.mode === 'string' ? conversation.config.mode : '';
+    const permissionMode: ClaudePermissionMode = configuredMode === 'plan'
+      ? 'plan'
+      : configuredMode === 'acceptEdits'
+        ? 'acceptEdits'
+        : configuredMode === 'bypassPermissions'
+          ? 'bypassPermissions'
+          : 'default';
+
+    if (permissionMode !== 'default') {
+      args.push('--permission-mode', permissionMode);
     }
 
     // Working directory
@@ -302,6 +305,7 @@ export class ClaudeCliAdapter implements RuntimeAdapter {
       ready: true,
       pendingRequestId: null,
       finalEmitted: false,
+      permissionMode,
     };
     this.handles.set(conversation.id, handle);
 
@@ -370,11 +374,6 @@ export class ClaudeCliAdapter implements RuntimeAdapter {
       case 'approval':
         handle.pendingRequestId = typeof parsed.payload.request_id === 'string' ? parsed.payload.request_id : handle.pendingRequestId;
         sink.emitApprovalRequest(conversationId, parsed.payload);
-        sink.emitClaudeStep(conversationId, { stepType: 'permit', stage: 'waiting', ...parsed.payload });
-        break;
-      case 'plan':
-        sink.emitPlanMessage(conversationId, parsed.payload);
-        sink.emitClaudeStep(conversationId, { stepType: 'plan', stage: 'completed', ...parsed.payload });
         break;
       case 'error':
         sink.emitError(conversationId, parsed.message);
@@ -394,20 +393,67 @@ export class ClaudeCliAdapter implements RuntimeAdapter {
 
     switch (parsed.subtype) {
       case 'can_use_tool': {
-        // Surface as approval request for the UI to approve/deny
         const toolName = typeof parsed.payload.tool_name === 'string' ? parsed.payload.tool_name : '';
         const toolInput = asRecord(parsed.payload.tool_input ?? parsed.payload.input);
+
+        if (toolName === 'ExitPlanMode' && handle.permissionMode !== 'plan') {
+          const autoResponse = {
+            type: 'control_response',
+            response: {
+              subtype: 'success',
+              request_id: parsed.requestId,
+              response: { behavior: 'allow' },
+            },
+          };
+          safeWrite(handle, `${JSON.stringify(autoResponse)}\n`);
+          handle.pendingRequestId = null;
+          break;
+        }
+
+        if (toolName === 'ExitPlanMode') {
+          // Plan exit: extract plan content from tool_input
+          const planContent = typeof toolInput.plan === 'string'
+            ? toolInput.plan
+            : typeof toolInput.plan_content === 'string'
+              ? toolInput.plan_content
+              : typeof toolInput.content === 'string'
+                ? toolInput.content
+                : extractClaudeText(toolInput);
+          sink.emitPlanExitRequest(conversationId, {
+            requestId: parsed.requestId,
+            toolName,
+            planContent,
+            toolInput,
+            ...parsed.payload,
+          });
+          sink.emitState(conversationId, 'waiting_input', 'Plan review: ExitPlanMode');
+          break;
+        }
+
+        if (toolName === 'AskUserQuestion') {
+          // Question: extract the question text from tool_input
+          const questionText = typeof toolInput.question === 'string'
+            ? toolInput.question
+            : typeof toolInput.text === 'string'
+              ? toolInput.text
+              : extractClaudeText(toolInput);
+          sink.emitQuestionRequest(conversationId, {
+            requestId: parsed.requestId,
+            toolName,
+            questionText,
+            toolInput,
+            ...parsed.payload,
+          });
+          sink.emitState(conversationId, 'waiting_input', 'Question from Claude');
+          break;
+        }
+
+        // Default: generic tool approval
         sink.emitApprovalRequest(conversationId, {
           requestId: parsed.requestId,
           toolName,
           toolInput,
           ...parsed.payload,
-        });
-        sink.emitClaudeStep(conversationId, {
-          stepType: 'permit',
-          stage: 'waiting',
-          toolName,
-          requestId: parsed.requestId,
         });
         sink.emitState(conversationId, 'waiting_input', `Tool permission: ${toolName}`);
         break;

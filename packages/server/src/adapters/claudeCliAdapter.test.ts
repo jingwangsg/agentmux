@@ -58,4 +58,31 @@ describe('Claude adapter helpers', () => {
       expect(parsed.sessionId).toBe('sess-abc');
     }
   });
+
+  it('does not produce plan kind for messages containing plan keywords', () => {
+    // After removing looksLikePlanEvent, messages with "plan mode" should be treated as normal text
+    const assistantWithPlan = parseClaudeLine(JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ text: 'I am now in plan mode and will create a plan' }] },
+    }));
+    expect(assistantWithPlan.kind).toBe('final');
+
+    const resultWithPermit = parseClaudeLine(JSON.stringify({
+      type: 'result',
+      content: [{ text: 'permit to execute the changes' }],
+      session_id: 'sess-1',
+    }));
+    expect(resultWithPermit.kind).toBe('final');
+
+    const systemWithPlan = parseClaudeLine(JSON.stringify({
+      type: 'system',
+      subtype: 'plan_notification',
+      content: 'plan mode active',
+    }));
+    expect(systemWithPlan.kind).toBe('ignore');
+
+    // Plain text in catch path should not become plan
+    const plainText = parseClaudeLine('permit to execute something');
+    expect(plainText.kind).toBe('delta');
+  });
 });

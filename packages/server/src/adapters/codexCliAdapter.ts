@@ -24,6 +24,8 @@ interface CodexHandle {
   lastTurnId: string | null;
   isRunning: boolean;
   pendingRequestId: string | null;
+  pendingServerRequestIds: Map<string, unknown>;
+  conversation: ConversationRecord | null;
   pending: Map<number, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void; timer?: ReturnType<typeof setTimeout>; method: string }>;
 }
 
@@ -44,8 +46,25 @@ export type CodexParsedNotification =
   | { kind: 'error'; message: string }
   | { kind: 'ignore' };
 
+function normalizeCodexModel(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function isKnownCodexMiniFallback(model: string | null): boolean {
+  return model === 'gpt-5.4-mini';
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+interface CodexCollaborationMode {
+  mode: string;
+  settings: {
+    model: string;
+    reasoning_effort: string | null;
+    developer_instructions: string | null;
+  };
 }
 
 function readTextCandidate(value: unknown): string {
@@ -72,7 +91,37 @@ function looksLikePlanPayload(params: Record<string, unknown>): boolean {
   const kind = typeof params.kind === 'string' ? params.kind : '';
   const subtype = typeof params.subtype === 'string' ? params.subtype : '';
   const text = readTextCandidate(params).toLowerCase();
-  return kind.includes('plan') || subtype.includes('plan') || text.includes('permit to execute') || text.includes('plan mode');
+  return kind.includes('plan')
+    || subtype.includes('plan')
+    || text.includes('permit to execute')
+    || text.includes('approve this plan')
+    || text.includes('exit plan mode');
+}
+
+function normalizeRequestKind(method: string, params: Record<string, unknown>): 'approval' | 'question' | 'plan_exit' {
+  const requestKind = typeof params.requestKind === 'string' ? params.requestKind : '';
+  if (requestKind === 'approval' || requestKind === 'question' || requestKind === 'plan_exit') return requestKind;
+  if (method === 'item/fileChange/requestApproval' || method === 'item/commandExecution/requestApproval' || method === 'approval/requested') {
+    return 'approval';
+  }
+  if (looksLikePlanPayload(params)) return 'plan_exit';
+  return 'question';
+}
+
+function normalizeInteractivePayload(method: string, params: Record<string, unknown>): Record<string, unknown> {
+  const requestKind = normalizeRequestKind(method, params);
+  const requestId = typeof params.requestId === 'string'
+    ? params.requestId
+    : typeof params.request_id === 'string'
+      ? params.request_id
+      : null;
+  const message = readTextCandidate(params);
+  return {
+    ...params,
+    requestId,
+    requestKind,
+    message,
+  };
 }
 
 function safeWrite(handle: CodexHandle, data: string): boolean {
@@ -148,7 +197,12 @@ export function parseCodexNotification(message: Record<string, unknown>): CodexP
     return content ? { kind: 'final', content } : { kind: 'ignore' };
   }
 
-  if (method === 'item/reasoning/textDelta' || method === 'item/reasoning/summaryTextDelta') {
+  if (method === 'item/reasoning/summaryTextDelta' || method === 'item/reasoning/summaryPartAdded') {
+    const content = readTextCandidate(params);
+    return content ? { kind: 'plan', payload: { ...params, content, summary: content, summaryOnly: true } } : { kind: 'ignore' };
+  }
+
+  if (method === 'item/reasoning/textDelta') {
     const content = readTextCandidate(params);
     return looksLikePlanPayload(params) && content ? { kind: 'plan', payload: { ...params, content } } : { kind: 'ignore' };
   }
@@ -171,11 +225,11 @@ export function parseCodexNotification(message: Record<string, unknown>): CodexP
   }
 
   if (method === 'item/tool/requestUserInput' || method === 'mcpServer/elicitation/request' || method === 'item/requestUserInput') {
-    return { kind: 'interactive', payload: params };
+    return { kind: 'interactive', payload: normalizeInteractivePayload(method, params) };
   }
 
   if (method === 'item/fileChange/requestApproval' || method === 'item/commandExecution/requestApproval' || method === 'approval/requested') {
-    return { kind: 'approval', payload: params };
+    return { kind: 'approval', payload: normalizeInteractivePayload(method, params) };
   }
 
   // Subagent (collabAgentToolCall) item events
@@ -223,17 +277,27 @@ export function parseCodexNotification(message: Record<string, unknown>): CodexP
 function buildCodexRuntimeConfig(conversation: ConversationRecord): {
   approvalPolicy: string;
   sandbox: string;
-  collaborationMode: string | null;
+  collaborationMode: CodexCollaborationMode | null;
   model: string | null;
   effort: string | null;
   config: Record<string, unknown>;
 } {
   const resolved = resolveConversationConfig('codex', conversation.config);
   const isAutoAccept = resolved.mode === 'auto-accept';
+  const collaborationMode = resolved.mode === 'plan'
+    ? {
+        mode: 'plan',
+        settings: {
+          model: resolved.model || '',
+          reasoning_effort: resolved.reasoningEffort || null,
+          developer_instructions: null,
+        },
+      }
+    : null;
   return {
     approvalPolicy: isAutoAccept ? 'never' : 'on-request',
     sandbox: isAutoAccept ? 'danger-full-access' : 'workspace-write',
-    collaborationMode: resolved.mode === 'plan' ? 'plan' : null,
+    collaborationMode,
     model: resolved.model || null,
     effort: resolved.reasoningEffort || null,
     config: {
@@ -244,8 +308,24 @@ function buildCodexRuntimeConfig(conversation: ConversationRecord): {
   };
 }
 
+export function resolveCodexSubagentEventModel(conversation: ConversationRecord, runtimeModel: unknown): string | null {
+  const resolvedParentModel = normalizeCodexModel(resolveConversationConfig('codex', conversation.config).model);
+  const normalizedRuntimeModel = normalizeCodexModel(runtimeModel);
+
+  if (normalizedRuntimeModel == null) {
+    return resolvedParentModel;
+  }
+
+  if (resolvedParentModel?.includes('/') && isKnownCodexMiniFallback(normalizedRuntimeModel)) {
+    return resolvedParentModel;
+  }
+
+  return normalizedRuntimeModel;
+}
+
 export function buildCodexTurnStartParams(conversation: ConversationRecord, content: string, threadId: string | null): Record<string, unknown> {
   const runtime = buildCodexRuntimeConfig(conversation);
+  const hasCollaborationMode = runtime.collaborationMode != null;
 
   return {
     threadId,
@@ -253,9 +333,9 @@ export function buildCodexTurnStartParams(conversation: ConversationRecord, cont
     cwd: conversation.cwd ?? process.cwd(),
     approvalPolicy: runtime.approvalPolicy,
     approvalsReviewer: 'user',
-    model: runtime.model,
+    model: hasCollaborationMode ? null : runtime.model,
     serviceTier: null,
-    effort: runtime.effort,
+    effort: hasCollaborationMode ? null : runtime.effort,
     summary: 'none',
     personality: null,
     outputSchema: null,
@@ -364,12 +444,31 @@ export class CodexCliAdapter implements RuntimeAdapter {
       throw new Error('Codex runtime is not attached');
     }
 
-    const method = typeof payload.kind === 'string' && payload.kind === 'approval' ? 'approval/response' : 'response';
-    await this.sendRpc(handle, method, {
-      threadId: handle.threadId,
-      requestId: handle.pendingRequestId,
-      ...payload,
-    }).catch(() => undefined);
+    const action = typeof payload.action === 'string' ? payload.action : 'approve';
+
+    // If the request came as a JSON-RPC server request (with id), respond with a JSON-RPC response
+    const requestKey = typeof payload.requestId === 'string' ? payload.requestId : handle.pendingRequestId;
+    const pendingServerRequestId = requestKey ? handle.pendingServerRequestIds.get(requestKey) : null;
+
+    if (pendingServerRequestId != null) {
+      const jsonRpcResponse = {
+        jsonrpc: '2.0' as const,
+        id: pendingServerRequestId,
+        result: { action: action === 'deny' ? 'decline' : 'accept', content: {}, ...payload },
+      };
+      safeWrite(handle, `${JSON.stringify(jsonRpcResponse)}\n`);
+      if (requestKey) {
+        handle.pendingServerRequestIds.delete(requestKey);
+      }
+    } else {
+      // Fallback: notification-style requests get an RPC-based response
+      const method = typeof payload.kind === 'string' && payload.kind === 'approval' ? 'approval/response' : 'response';
+      await this.sendRpc(handle, method, {
+        threadId: handle.threadId,
+        requestId: handle.pendingRequestId,
+        ...payload,
+      }).catch(() => undefined);
+    }
     sink.emitState(conversationId, 'running', 'Interactive response sent to Codex');
   }
 
@@ -408,6 +507,8 @@ export class CodexCliAdapter implements RuntimeAdapter {
       lastTurnId: null,
       isRunning: false,
       pendingRequestId: null,
+      pendingServerRequestIds: new Map(),
+      conversation,
       pending: new Map(),
     };
     this.handles.set(conversation.id, handle);
@@ -486,13 +587,17 @@ export class CodexCliAdapter implements RuntimeAdapter {
       return;
     }
 
-    if (typeof payload.id === 'number') {
-      const pending = handle.pending.get(payload.id);
+    // Distinguish JSON-RPC responses, server requests, and notifications.
+    // Responses have id + (result|error); requests have id + method; notifications have method only.
+    const isResponse = payload.id != null && ('result' in payload || 'error' in payload);
+    if (isResponse) {
+      const numericId = typeof payload.id === 'number' ? payload.id : parseInt(String(payload.id), 10);
+      const pending = handle.pending.get(numericId);
       if (!pending) {
         return;
       }
       if (pending.timer) clearTimeout(pending.timer);
-      handle.pending.delete(payload.id);
+      handle.pending.delete(numericId);
       if ('error' in payload) {
         const errPayload = payload.error;
         const errMsg = typeof errPayload === 'string'
@@ -508,6 +613,15 @@ export class CodexCliAdapter implements RuntimeAdapter {
     }
 
     const parsed = parseCodexNotification(payload);
+
+    // Server-initiated request (has method + id): associate the JSON-RPC id with the emitted prompt/request id.
+    if (typeof payload.method === 'string' && payload.id != null) {
+      const requestPayload = parsed.kind === 'interactive' || parsed.kind === 'approval' ? parsed.payload : null;
+      const requestId = requestPayload && typeof requestPayload.requestId === 'string' ? requestPayload.requestId : null;
+      if (requestId) {
+        handle.pendingServerRequestIds.set(requestId, payload.id);
+      }
+    }
     switch (parsed.kind) {
       case 'state':
         if (parsed.threadId) {
@@ -545,13 +659,17 @@ export class CodexCliAdapter implements RuntimeAdapter {
         break;
       case 'interactive':
         handle.pendingRequestId = typeof parsed.payload.requestId === 'string' ? parsed.payload.requestId : handle.pendingRequestId;
-        sink.emitInteractiveRequest(conversationId, parsed.payload);
-        sink.emitCodexRequest(conversationId, { requestType: 'interactive', ...parsed.payload });
+        if (parsed.payload.requestKind === 'question') {
+          sink.emitQuestionRequest(conversationId, parsed.payload);
+        } else if (parsed.payload.requestKind === 'plan_exit') {
+          sink.emitPlanExitRequest(conversationId, parsed.payload);
+        } else {
+          sink.emitInteractiveRequest(conversationId, parsed.payload);
+        }
         break;
       case 'approval':
         handle.pendingRequestId = typeof parsed.payload.requestId === 'string' ? parsed.payload.requestId : handle.pendingRequestId;
         sink.emitApprovalRequest(conversationId, parsed.payload);
-        sink.emitCodexRequest(conversationId, { requestType: 'approval', ...parsed.payload });
         break;
       case 'plan':
         sink.emitPlanMessage(conversationId, parsed.payload);
@@ -564,7 +682,10 @@ export class CodexCliAdapter implements RuntimeAdapter {
         sink.emitTokenUsage(conversationId, parsed.payload);
         break;
       case 'subagent_event':
-        sink.emitSubagentEvent(conversationId, parsed.payload);
+        sink.emitSubagentEvent(conversationId, {
+          ...parsed.payload,
+          model: handle.conversation ? resolveCodexSubagentEventModel(handle.conversation, parsed.payload.model) : null,
+        });
         break;
       case 'subagent_thread':
         sink.emitSubagentThreadStarted(conversationId, parsed.payload);

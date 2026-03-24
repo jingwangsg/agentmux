@@ -1,6 +1,13 @@
 import { useMemo, useState } from 'react';
 import type { StoredEvent as ConversationEvent } from '../lib/types';
 
+function formatModelLabel(model: string | null): string | null {
+  if (!model) return null;
+  const trimmed = model.trim();
+  if (!trimmed) return null;
+  return trimmed;
+}
+
 interface SubagentInfo {
   threadId: string;
   tool: string;
@@ -26,7 +33,7 @@ function mapAgentStatus(status: string): SubagentInfo['displayStatus'] {
   }
 }
 
-function extractSubagents(events: ConversationEvent[]): SubagentInfo[] {
+export function extractSubagents(events: ConversationEvent[]): SubagentInfo[] {
   const agentMap = new Map<string, SubagentInfo>();
 
   for (const event of events) {
@@ -34,7 +41,11 @@ function extractSubagents(events: ConversationEvent[]): SubagentInfo[] {
 
     const payload = event.payload;
     const tool = typeof payload.tool === 'string' ? payload.tool : '';
-    const receiverIds = Array.isArray(payload.receiverThreadIds) ? payload.receiverThreadIds as string[] : [];
+    const receiverIds = Array.isArray(payload.receiverThreadIds)
+      ? payload.receiverThreadIds as string[]
+      : typeof payload.threadId === 'string' && payload.threadId
+        ? [payload.threadId]
+        : [];
     const agentsStates = typeof payload.agentsStates === 'object' && payload.agentsStates ? payload.agentsStates as Record<string, { status?: string; message?: string }> : {};
 
     for (const threadId of receiverIds) {
@@ -46,8 +57,8 @@ function extractSubagents(events: ConversationEvent[]): SubagentInfo[] {
         threadId,
         tool: tool || existing?.tool || 'spawnAgent',
         status: rawStatus,
-        agentNickname: existing?.agentNickname ?? null,
-        agentRole: existing?.agentRole ?? null,
+        agentNickname: typeof payload.agentNickname === 'string' ? payload.agentNickname : existing?.agentNickname ?? null,
+        agentRole: typeof payload.agentRole === 'string' ? payload.agentRole : existing?.agentRole ?? null,
         prompt: typeof payload.prompt === 'string' ? payload.prompt : existing?.prompt ?? null,
         model: typeof payload.model === 'string' ? payload.model : existing?.model ?? null,
         displayStatus: mapAgentStatus(rawStatus),
@@ -88,6 +99,9 @@ export default function SubagentsPanel({ events, onOpenChild }: SubagentsPanelPr
                 <span className="subagent-status-text">
                   {agent.displayStatus === 'active' ? 'is working' : agent.displayStatus === 'waiting' ? 'is awaiting instruction' : 'is done'}
                 </span>
+                {formatModelLabel(agent.model) ? (
+                  <span className="subagent-model">{formatModelLabel(agent.model)}</span>
+                ) : null}
               </div>
               {agent.prompt ? <span className="subagent-summary">{agent.prompt.slice(0, 60)}</span> : null}
             </div>

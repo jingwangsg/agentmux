@@ -256,6 +256,39 @@ describe('Runtime adapters with mocked processes', () => {
     expect(calls.some((c) => c.kind === 'codex_request' && JSON.stringify(c.args).includes('req-plan-1'))).toBe(false);
   });
 
+
+  it('Codex adapter responds to the matching server request id when prompts overlap', async () => {
+    const child = new MockChildProcess();
+    const spawnMock = vi.fn(() => child as unknown as never);
+    const adapter = new CodexCliAdapter(spawnMock as never);
+    const { sink } = createSink();
+    const writes: string[] = [];
+    child.stdin.on('data', (chunk) => writes.push(String(chunk)));
+
+    autoReplyJsonRpc(child);
+    await adapter.resume({ ...conversation, backend: 'codex' }, sink);
+
+    child.stdout.write(JSON.stringify({
+      id: 101,
+      method: 'item/tool/requestUserInput',
+      params: { requestId: 'req-question-1', message: 'First question' },
+    }) + '\n');
+    child.stdout.write(JSON.stringify({
+      id: 202,
+      method: 'item/fileChange/requestApproval',
+      params: { requestId: 'req-approval-2' },
+    }) + '\n');
+
+    await adapter.respond(conversation.id, { requestId: 'req-question-1', action: 'approve', requestKind: 'question' }, sink);
+
+    const responseLines = writes.filter((line) => line.includes('"jsonrpc":"2.0"'));
+    expect(responseLines.length).toBeGreaterThan(0);
+    const parsed = JSON.parse(responseLines.at(-1)!.trim()) as { id: number; result: Record<string, unknown> };
+    expect(parsed.id).toBe(101);
+    expect(parsed.result.requestId).toBe('req-question-1');
+    expect(parsed.result.action).toBe('approve');
+  });
+
   it('Codex adapter keeps generic codex request for normal interactive questions', async () => {
     const child = new MockChildProcess();
     const spawnMock = vi.fn(() => child as unknown as never);

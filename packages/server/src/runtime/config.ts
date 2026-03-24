@@ -44,7 +44,13 @@ const MINIMAL_REASONING_FALLBACKS: ConfigCandidate[] = [
   { value: 'low', label: 'Low', description: 'Lower latency for quick tasks.' },
   { value: 'medium', label: 'Medium', description: 'Balanced default effort.' },
   { value: 'high', label: 'High', description: 'Longer reasoning for harder tasks.' },
-  { value: 'max', label: 'Max', description: 'Deepest reasoning for supported models.' },
+  { value: 'xhigh', label: 'Extra High', description: 'Deepest reasoning for the hardest tasks.' },
+];
+
+const CLAUDE_REASONING_CANDIDATES: ConfigCandidate[] = [
+  { value: 'low', label: 'Low', description: 'Lower latency for quick tasks.' },
+  { value: 'medium', label: 'Medium', description: 'Balanced default effort.' },
+  { value: 'high', label: 'High', description: 'Longer reasoning for harder tasks.' },
 ];
 
 const EMPTY_CANDIDATES: ConfigCandidate[] = [];
@@ -224,7 +230,11 @@ function readClaudeConfig(): ConversationConfig {
           ? parsed.reasoningEffort
           : typeof parsed.reasoning_effort === 'string'
             ? parsed.reasoning_effort
-            : undefined,
+            : typeof parsed.effortLevel === 'string'
+              ? parsed.effortLevel
+              : parsed.alwaysThinkingEnabled === true
+                ? 'high'
+                : undefined,
       mode:
         typeof parsed.initialPermissionMode === 'string'
           ? parsed.initialPermissionMode
@@ -379,7 +389,10 @@ export function resolveConfigCandidates(
           dynamic.model.length ? dynamic.model : MINIMAL_MODEL_FALLBACKS.claude,
           [defaults.model, typeof localConfig.model === 'string' ? localConfig.model : undefined],
         ),
-        reasoningEffort: dynamic.reasoningEffort,
+        reasoningEffort: dedupeCandidates(
+          dynamic.reasoningEffort.length ? dynamic.reasoningEffort : CLAUDE_REASONING_CANDIDATES,
+          [defaults.reasoningEffort, typeof localConfig.reasoningEffort === 'string' ? localConfig.reasoningEffort : undefined],
+        ),
         mode: dedupeModeCandidates(CLAUDE_MODE_CANDIDATES, [defaults.mode, typeof localConfig.mode === 'string' ? localConfig.mode : undefined, typeof config.mode === 'string' ? config.mode : undefined]),
       },
     };

@@ -109,13 +109,15 @@ describe('Runtime adapters with mocked processes', () => {
     await adapter.resume(conversation, sink);
     child.stdout.write(JSON.stringify({ type: 'tool_use', name: 'bash' }) + '\n');
     child.stdout.write(JSON.stringify({ type: 'permission_request', id: 'p1' }) + '\n');
-    child.stderr.write('stderr boom\n');
+    child.stderr.write('Ignoring extra certs from /etc/ssl/certs/npm-bundle.crt, load failed\n');
+    child.stderr.write('fatal stderr boom\n');
     await adapter.cancel(conversation.id);
     child.emit('close');
 
     expect(calls.some((call) => call.kind === 'tool_call')).toBe(true);
     expect(calls.some((call) => call.kind === 'approval')).toBe(true);
-    expect(calls.some((call) => call.kind === 'error' && String(call.args[1]).includes('stderr boom'))).toBe(true);
+    expect(calls.some((call) => call.kind === 'error' && String(call.args[1]).includes('fatal stderr boom'))).toBe(true);
+    expect(calls.some((call) => call.kind === 'error' && String(call.args[1]).includes('Ignoring extra certs'))).toBe(false);
     expect(child.killed).toBe(true);
     expect(calls.some((call) => call.kind === 'state' && call.args[1] === 'stopped')).toBe(true);
   });

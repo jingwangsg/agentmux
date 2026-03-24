@@ -33,6 +33,11 @@ type UiMessage = {
   canRewind?: boolean;
 };
 
+type RuntimeBanner = {
+  content: string;
+  details?: string;
+} | null;
+
 const THEMES: { value: Theme; label: string }[] = [
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
@@ -132,10 +137,6 @@ function summarizeRuntimeState(payload: Record<string, unknown>): string | null 
 }
 
 function summarizeEvent(event: ConversationEvent): { role: UiMessageRole; content: string; details?: string } | null {
-  if (event.type === 'runtime.state') {
-    const summary = summarizeRuntimeState(event.payload);
-    return summary ? { role: 'status', content: summary, details: JSON.stringify(event.payload, null, 2) } : null;
-  }
 
   if (event.type === 'tool.call') {
     const toolName = typeof event.payload.name === 'string'
@@ -204,17 +205,21 @@ function deriveMessages(events: ConversationEvent[]): UiMessage[] {
     }
 
     if (event.type === 'message.assistant.final') {
-      messages.push({ id: event.id, role: 'assistant', content: String(event.payload.content ?? liveAssistant), event });
+      const finalContent = String(event.payload.content ?? '').trim();
+      const bufferedContent = liveAssistant.trim();
+      const content = finalContent || bufferedContent;
+      if (content) {
+        const previous = messages[messages.length - 1];
+        if (!(previous?.role === 'assistant' && previous.content.trim() === content)) {
+          messages.push({ id: event.id, role: 'assistant', content, event });
+        }
+      }
       liveAssistant = '';
       continue;
     }
 
     const summary = summarizeEvent(event);
     if (summary) {
-      const previous = messages[messages.length - 1];
-      if (summary.role === 'status' && previous?.role === 'status' && previous.content === summary.content) {
-        continue;
-      }
       messages.push({ id: event.id, event, ...summary });
     }
   }
@@ -227,6 +232,26 @@ function deriveMessages(events: ConversationEvent[]): UiMessage[] {
     ...message,
     canRewind: message.role === 'user' && message.id === lastUserMessageId,
   }));
+}
+
+
+function deriveRuntimeBanner(events: ConversationEvent[]): RuntimeBanner {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.type !== 'runtime.state') {
+      continue;
+    }
+    const summary = summarizeRuntimeState(event.payload);
+    if (!summary) {
+      return null;
+    }
+    return {
+      content: summary,
+      details: JSON.stringify(event.payload, null, 2),
+    };
+  }
+
+  return null;
 }
 
 function EmptyState({ onCreate }: { onCreate: (backend: BackendType) => void }) {
@@ -380,6 +405,7 @@ export default function App() {
     [conversations, activeId],
   );
   const messages = useMemo(() => deriveMessages(events), [events]);
+  const runtimeBanner = useMemo(() => deriveRuntimeBanner(events), [events]);
   const showEmptyState = !isLoadingConversations && conversations.length === 0;
   const activeConfig = activeConversation?.config ?? {};
   const activeOptions = activeConversation ? configOptions[activeConversation.backend] : null;
@@ -389,9 +415,7 @@ export default function App() {
       typeof activeConfig.reasoningEffort === 'string' ? activeConfig.reasoningEffort : activeOptions?.defaults.reasoningEffort ?? '',
     mode: typeof activeConfig.mode === 'string' ? activeConfig.mode : activeOptions?.defaults.mode ?? '',
   };
-  const showReasoningSelector = activeConversation?.backend === 'codex'
-    ? true
-    : Boolean(activeOptions?.candidates.reasoningEffort.length);
+  const showReasoningSelector = Boolean(activeOptions?.defaults.reasoningEffort || activeOptions?.candidates.reasoningEffort.length);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -603,6 +627,18 @@ export default function App() {
             </header>
 
             <section className="messages">
+              {runtimeBanner ? (
+                <div className="runtime-banner">
+                  <div className="runtime-banner-label">Status</div>
+                  <div className="runtime-banner-content">{runtimeBanner.content}</div>
+                  {runtimeBanner.details ? (
+                    <details className="message-details">
+                      <summary>Raw details</summary>
+                      <pre>{runtimeBanner.details}</pre>
+                    </details>
+                  ) : null}
+                </div>
+              ) : null}
               {isLoadingEvents ? <div className="messages-loading">Loading messages…</div> : null}
               {!isLoadingEvents && messages.length === 0 ? (
                 <div className="messages-empty">No messages yet. Send the first message to this conversation.</div>

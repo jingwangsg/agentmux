@@ -116,6 +116,8 @@ describe('Backend config option variants', () => {
       .expect(200);
 
     expect(response.body.backend).toBe('claude');
+    expect(response.body.defaults.reasoningEffort).toBeTruthy();
+    expect(response.body.candidates.reasoningEffort.length).toBeGreaterThan(0);
     expect(response.body.candidates.mode.map((candidate: { value: string }) => candidate.value)).toEqual(
       expect.arrayContaining(['default', 'plan', 'acceptEdits', 'bypassPermissions']),
     );

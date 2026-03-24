@@ -65,8 +65,11 @@ export function parseClaudeLine(line: string): ClaudeParsedEvent {
     }
 
     const fallback = extractClaudeText(data.content);
-    return fallback ? { kind: 'delta', content: fallback } : { kind: 'delta', content: trimmed };
+    return fallback ? { kind: 'delta', content: fallback } : { kind: 'ignore' };
   } catch {
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      return { kind: 'ignore' };
+    }
     return { kind: 'delta', content: trimmed };
   }
 }
@@ -174,7 +177,18 @@ export class ClaudeCliAdapter implements RuntimeAdapter {
     stdout.on('line', (line) => this.handleLine(conversation.id, line, sink));
 
     const stderr = createInterface({ input: processHandle.stderr });
-    stderr.on('line', (line) => sink.emitError(conversation.id, line));
+    stderr.on('line', (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return;
+      }
+      if (/Ignoring extra certs from .*npm-bundle\.crt/i.test(trimmed)) {
+        return;
+      }
+      if (/\b(error|failed|fatal|exception)\b/i.test(trimmed)) {
+        sink.emitError(conversation.id, trimmed);
+      }
+    });
 
     processHandle.on('close', () => {
       sink.emitState(conversation.id, 'stopped', 'Claude runtime exited');

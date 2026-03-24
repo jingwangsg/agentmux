@@ -1127,3 +1127,24 @@ textarea::placeholder {
     min-height: 48px;
   }
 }
+
+
+.runtime-banner {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-color, rgba(0,0,0,0.08));
+  border-radius: 14px;
+  background: var(--panel-bg, rgba(255,255,255,0.72));
+}
+
+.runtime-banner-label {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.65;
+}
+
+.runtime-banner-content {
+  font-size: 15px;
+  font-weight: 500;
+}

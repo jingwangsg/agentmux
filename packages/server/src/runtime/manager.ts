@@ -47,6 +47,10 @@ export class ConversationManager implements RuntimeEventSink {
       cwd: input.cwd ?? null,
       config: normalizeConversationConfig(input.backend, input.config),
       resumeHandle: { backend: input.backend },
+      parentConversationId: null,
+      depth: 0,
+      agentNickname: null,
+      agentRole: null,
       createdAt: now,
       updatedAt: now,
       lastRuntimeStartedAt: null,
@@ -407,6 +411,113 @@ export class ConversationManager implements RuntimeEventSink {
       type: 'token_usage',
       payload,
       createdAt: new Date().toISOString(),
+    });
+  }
+
+  public emitSubagentEvent(conversationId: string, payload: Record<string, unknown>): void {
+    const tool = typeof payload.tool === 'string' ? payload.tool : '';
+    const status = typeof payload.status === 'string' ? payload.status : '';
+    const receiverThreadIds = Array.isArray(payload.receiverThreadIds) ? payload.receiverThreadIds as string[] : [];
+
+    // Determine event type
+    const eventType: 'subagent.spawned' | 'subagent.status' | 'subagent.completed' =
+      tool === 'spawnAgent' && status === 'inProgress' ? 'subagent.spawned'
+        : status === 'completed' || status === 'failed' ? 'subagent.completed'
+        : 'subagent.status';
+
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: eventType,
+      payload,
+      createdAt: new Date().toISOString(),
+    });
+
+    // Auto-create child conversations for spawnAgent
+    if (tool === 'spawnAgent' && receiverThreadIds.length > 0) {
+      const parent = this.db.getConversation(conversationId);
+      if (parent) {
+        for (const childThreadId of receiverThreadIds) {
+          this.createChildConversation(parent, childThreadId, {
+            model: typeof payload.model === 'string' ? payload.model : undefined,
+            prompt: typeof payload.prompt === 'string' ? payload.prompt : undefined,
+          });
+        }
+      }
+    }
+  }
+
+  public emitSubagentThreadStarted(conversationId: string, payload: Record<string, unknown>): void {
+    const parentThreadId = typeof payload.parentThreadId === 'string' ? payload.parentThreadId : null;
+    const depth = typeof payload.depth === 'number' ? payload.depth : 1;
+    const nickname = typeof payload.agentNickname === 'string' ? payload.agentNickname : null;
+    const role = typeof payload.agentRole === 'string' ? payload.agentRole : null;
+    const threadId = typeof payload.threadId === 'string' ? payload.threadId : null;
+
+    // Try to find and update the child conversation by threadId in resumeHandle
+    if (threadId) {
+      const allConversations = this.db.listConversations();
+      const child = allConversations.find((c) =>
+        c.resumeHandle && (c.resumeHandle as Record<string, unknown>).threadId === threadId
+      );
+      if (child) {
+        const now = new Date().toISOString();
+        const updated: ConversationRecord = {
+          ...child,
+          depth,
+          agentNickname: nickname ?? child.agentNickname,
+          agentRole: role ?? child.agentRole,
+          updatedAt: now,
+        };
+        this.db.updateConversation(updated);
+      }
+    }
+
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: 'subagent.status',
+      payload: { ...payload, event: 'thread_started' },
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  public listChildConversations(parentId: string): ConversationRecord[] {
+    return this.db.listChildConversations(parentId);
+  }
+
+  private createChildConversation(parent: ConversationRecord, childThreadId: string, meta: { model?: string; prompt?: string }): void {
+    // Dedup: skip if a child with this threadId already exists
+    const existing = this.db.listConversations().find((c) =>
+      c.resumeHandle && (c.resumeHandle as Record<string, unknown>).threadId === childThreadId
+    );
+    if (existing) return;
+
+    const now = new Date().toISOString();
+    const child: ConversationRecord = {
+      id: nanoid(),
+      backend: parent.backend,
+      title: meta.prompt ? (meta.prompt.length > 50 ? `${meta.prompt.slice(0, 47)}...` : meta.prompt) : `Subagent`,
+      runtimeState: 'running',
+      cwd: parent.cwd,
+      config: meta.model ? { ...parent.config, model: meta.model } : parent.config,
+      resumeHandle: { backend: parent.backend, threadId: childThreadId },
+      parentConversationId: parent.id,
+      depth: parent.depth + 1,
+      agentNickname: null,
+      agentRole: null,
+      createdAt: now,
+      updatedAt: now,
+      lastRuntimeStartedAt: now,
+      lastRuntimeStoppedAt: null,
+    };
+    this.db.createConversation(child);
+    this.recordEvent({
+      id: nanoid(),
+      conversationId: child.id,
+      type: 'conversation.created',
+      payload: { conversation: child, parentConversationId: parent.id },
+      createdAt: now,
     });
   }
 

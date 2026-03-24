@@ -23,6 +23,7 @@ import { buildClaudeTimeline } from './timeline/claude';
 import { buildCodexTimeline } from './timeline/codex';
 import { deriveRuntimeBanner, type TimelineItem } from './timeline/shared';
 import MessageBubble from './components/MessageBubble';
+import SubagentsPanel from './components/SubagentsPanel';
 
 type Theme = 'light' | 'dark' | 'dusk' | 'sand';
 type WsState = 'connecting' | 'open' | 'closed';
@@ -230,12 +231,12 @@ export default function App() {
             <span className={`connection-badge ${wsState}`}>{wsState}</span>
           </div>
           <div className="sidebar-actions">
-            <button onClick={() => void handleCreateConversation('codex')}>+ Codex</button>
             <button onClick={() => void handleCreateConversation('claude')}>+ Claude</button>
+            <button onClick={() => void handleCreateConversation('codex')}>+ Codex</button>
           </div>
         </div>
         <div className="conversation-list">
-          {conversations.map((c) => (
+          {conversations.filter((c) => !c.parentConversationId).map((c) => (
             <button
               key={c.id}
               className={`conversation-card ${c.id === activeId ? 'active' : ''}`}
@@ -285,8 +286,8 @@ export default function App() {
               <h1>AgentMux v2</h1>
               <p>Server-managed Claude and Codex conversations.</p>
               <div className="empty-state-actions">
-                <button onClick={() => void handleCreateConversation('codex')}>New Codex Conversation</button>
                 <button onClick={() => void handleCreateConversation('claude')}>New Claude Conversation</button>
+                <button onClick={() => void handleCreateConversation('codex')}>New Codex Conversation</button>
               </div>
             </div>
           </div>
@@ -295,8 +296,15 @@ export default function App() {
             {/* Header bar */}
             <header className="main-header">
               <div className="main-header-left">
+                {activeConversation.parentConversationId ? (
+                  <button className="back-to-parent" onClick={() => setActiveId(activeConversation.parentConversationId)}>← Parent</button>
+                ) : null}
                 <span className="main-header-title">{activeConversation.title}</span>
-                <span className="main-header-meta">{activeConversation.backend.toUpperCase()}{activeConversation.cwd ? ` · ${activeConversation.cwd}` : ''}</span>
+                <span className="main-header-meta">
+                  {activeConversation.backend.toUpperCase()}
+                  {activeConversation.agentRole ? ` · ${activeConversation.agentRole}` : ''}
+                  {activeConversation.cwd ? ` · ${activeConversation.cwd}` : ''}
+                </span>
               </div>
               <div className="control-row">
                 {runtimeBanner ? <span className="runtime-pill">{runtimeBanner.content}</span> : null}
@@ -309,6 +317,13 @@ export default function App() {
             {/* Messages */}
             <section className="messages">
               <div className="messages-inner">
+                <SubagentsPanel
+                  events={activeEvents}
+                  onOpenChild={(threadId) => {
+                    const child = conversations.find((c) => c.resumeHandle && (c.resumeHandle as Record<string, unknown>).threadId === threadId);
+                    if (child) setActiveId(child.id);
+                  }}
+                />
                 {isLoadingEvents ? <div className="messages-loading">Loading…</div> : null}
                 {!isLoadingEvents && visibleTimeline.length === 0 ? (
                   <div className="messages-empty">Send the first message to start the conversation.</div>
@@ -352,7 +367,10 @@ export default function App() {
                         <div className="model-pill-wrapper" data-selector-popover>
                           <button className="model-pill" onClick={() => setModelOpen(!modelOpen)} disabled={isUpdatingConfig}>
                             {getCandidateLabel(activeOptions.candidates.model, resolvedConfig.model)}
-                            {activeConversation.backend === 'codex' ? ` · ${resolvedConfig.reasoningEffort}` : ''}
+                            {' · '}
+                            {getCandidateLabel(activeOptions.candidates.reasoningEffort, resolvedConfig.reasoningEffort)}
+                            {' · '}
+                            {getCandidateLabel(activeOptions.candidates.mode, resolvedConfig.mode)}
                           </button>
                           {modelOpen ? (
                             <div className="selector-popover">
@@ -363,17 +381,13 @@ export default function App() {
                                   {c.label}{c.badge ? <span className="selector-badge">{c.badge}</span> : null}
                                 </button>
                               ))}
-                              {activeConversation.backend === 'codex' ? (
-                                <>
-                                  <div className="selector-popover-title">Reasoning</div>
-                                  {activeOptions.candidates.reasoningEffort.map((c) => (
-                                    <button key={c.value} className={`selector-option ${c.value === resolvedConfig.reasoningEffort ? 'active' : ''}`}
-                                      onClick={() => { void handleConfigChange({ reasoningEffort: c.value }); setModelOpen(false); }}>
-                                      {c.label}
-                                    </button>
-                                  ))}
-                                </>
-                              ) : null}
+                              <div className="selector-popover-title">Reasoning</div>
+                              {activeOptions.candidates.reasoningEffort.map((c) => (
+                                <button key={c.value} className={`selector-option ${c.value === resolvedConfig.reasoningEffort ? 'active' : ''}`}
+                                  onClick={() => { void handleConfigChange({ reasoningEffort: c.value }); setModelOpen(false); }}>
+                                  {c.label}
+                                </button>
+                              ))}
                               <div className="selector-popover-title">Mode</div>
                               {activeOptions.candidates.mode.map((c) => (
                                 <button key={c.value} className={`selector-option ${c.value === resolvedConfig.mode ? 'active' : ''}`}

@@ -96,6 +96,22 @@ export function buildCodexTimeline(events: ConversationEvent[]): TimelineItem[] 
       continue;
     }
 
+    if (event.type === 'subagent.spawned' || event.type === 'subagent.status' || event.type === 'subagent.completed') {
+      const tool = typeof event.payload.tool === 'string' ? event.payload.tool : 'subagent';
+      const receiverIds = Array.isArray(event.payload.receiverThreadIds) ? event.payload.receiverThreadIds as string[] : [];
+      const statusText = typeof event.payload.status === 'string' ? event.payload.status : '';
+      items.push({
+        id: event.id,
+        kind: 'subagent',
+        title: `${tool}${receiverIds.length > 0 ? ` (${receiverIds.length} agent${receiverIds.length !== 1 ? 's' : ''})` : ''}`,
+        body: (typeof event.payload.prompt === 'string' ? event.payload.prompt : '') || statusText,
+        details: stringifyDetails(event.payload),
+        event,
+        collapsed: tool !== 'spawnAgent',
+      });
+      continue;
+    }
+
     if (event.type === 'error') {
       items.push({ id: event.id, kind: 'error', title: 'Error', body: readPayloadText(event.payload) || String(event.payload.message ?? 'Unknown error'), details: stringifyDetails(event.payload), event });
       continue;

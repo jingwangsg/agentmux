@@ -23,6 +23,10 @@ export class AgentMuxDatabase {
         cwd TEXT,
         config_json TEXT NOT NULL,
         resume_handle_json TEXT,
+        parent_conversation_id TEXT,
+        depth INTEGER NOT NULL DEFAULT 0,
+        agent_nickname TEXT,
+        agent_role TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         last_runtime_started_at TEXT,
@@ -41,19 +45,41 @@ export class AgentMuxDatabase {
       CREATE INDEX IF NOT EXISTS idx_conversation_events_conversation_id_created_at
       ON conversation_events(conversation_id, created_at, id);
     `);
+
+    // Migration: add subagent columns if missing
+    try {
+      this.db.prepare('SELECT parent_conversation_id FROM conversations LIMIT 0').get();
+    } catch {
+      this.db.exec(`
+        ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT;
+        ALTER TABLE conversations ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE conversations ADD COLUMN agent_nickname TEXT;
+        ALTER TABLE conversations ADD COLUMN agent_role TEXT;
+      `);
+    }
   }
 
   public listConversations(): ConversationRecord[] {
     const rows = this.db.prepare(`
       SELECT * FROM conversations
       ORDER BY updated_at DESC, created_at DESC
-    `).all() as Array<Record<string, string | null>>;
+    `).all() as Array<Record<string, string | number | null>>;
+
+    return rows.map((row) => this.mapConversation(row));
+  }
+
+  public listChildConversations(parentId: string): ConversationRecord[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM conversations
+      WHERE parent_conversation_id = ?
+      ORDER BY created_at ASC
+    `).all(parentId) as Array<Record<string, string | number | null>>;
 
     return rows.map((row) => this.mapConversation(row));
   }
 
   public getConversation(id: string): ConversationRecord | null {
-    const row = this.db.prepare(`SELECT * FROM conversations WHERE id = ?`).get(id) as Record<string, string | null> | undefined;
+    const row = this.db.prepare(`SELECT * FROM conversations WHERE id = ?`).get(id) as Record<string, string | number | null> | undefined;
     return row ? this.mapConversation(row) : null;
   }
 
@@ -61,8 +87,9 @@ export class AgentMuxDatabase {
     this.db.prepare(`
       INSERT INTO conversations (
         id, backend, title, runtime_state, cwd, config_json, resume_handle_json,
+        parent_conversation_id, depth, agent_nickname, agent_role,
         created_at, updated_at, last_runtime_started_at, last_runtime_stopped_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       conversation.id,
       conversation.backend,
@@ -71,6 +98,10 @@ export class AgentMuxDatabase {
       conversation.cwd,
       JSON.stringify(conversation.config),
       conversation.resumeHandle ? JSON.stringify(conversation.resumeHandle) : null,
+      conversation.parentConversationId,
+      conversation.depth,
+      conversation.agentNickname,
+      conversation.agentRole,
       conversation.createdAt,
       conversation.updatedAt,
       conversation.lastRuntimeStartedAt,
@@ -86,6 +117,10 @@ export class AgentMuxDatabase {
         cwd = ?,
         config_json = ?,
         resume_handle_json = ?,
+        parent_conversation_id = ?,
+        depth = ?,
+        agent_nickname = ?,
+        agent_role = ?,
         updated_at = ?,
         last_runtime_started_at = ?,
         last_runtime_stopped_at = ?
@@ -96,6 +131,10 @@ export class AgentMuxDatabase {
       conversation.cwd,
       JSON.stringify(conversation.config),
       conversation.resumeHandle ? JSON.stringify(conversation.resumeHandle) : null,
+      conversation.parentConversationId,
+      conversation.depth,
+      conversation.agentNickname,
+      conversation.agentRole,
       conversation.updatedAt,
       conversation.lastRuntimeStartedAt,
       conversation.lastRuntimeStoppedAt,
@@ -138,19 +177,23 @@ export class AgentMuxDatabase {
     }));
   }
 
-  private mapConversation(row: Record<string, string | null>): ConversationRecord {
+  private mapConversation(row: Record<string, string | number | null>): ConversationRecord {
     return {
-      id: row.id ?? '',
-      backend: (row.backend ?? 'codex') as ConversationRecord['backend'],
-      title: row.title ?? '',
-      runtimeState: (row.runtime_state ?? 'idle') as ConversationRecord['runtimeState'],
-      cwd: row.cwd,
-      config: JSON.parse(row.config_json ?? '{}'),
-      resumeHandle: row.resume_handle_json ? JSON.parse(row.resume_handle_json) : null,
-      createdAt: row.created_at ?? '',
-      updatedAt: row.updated_at ?? '',
-      lastRuntimeStartedAt: row.last_runtime_started_at,
-      lastRuntimeStoppedAt: row.last_runtime_stopped_at,
+      id: String(row.id ?? ''),
+      backend: (String(row.backend ?? 'codex')) as ConversationRecord['backend'],
+      title: String(row.title ?? ''),
+      runtimeState: (String(row.runtime_state ?? 'idle')) as ConversationRecord['runtimeState'],
+      cwd: row.cwd != null ? String(row.cwd) : null,
+      config: JSON.parse(String(row.config_json ?? '{}')),
+      resumeHandle: row.resume_handle_json ? JSON.parse(String(row.resume_handle_json)) : null,
+      parentConversationId: row.parent_conversation_id != null ? String(row.parent_conversation_id) : null,
+      depth: typeof row.depth === 'number' ? row.depth : 0,
+      agentNickname: row.agent_nickname != null ? String(row.agent_nickname) : null,
+      agentRole: row.agent_role != null ? String(row.agent_role) : null,
+      createdAt: String(row.created_at ?? ''),
+      updatedAt: String(row.updated_at ?? ''),
+      lastRuntimeStartedAt: row.last_runtime_started_at != null ? String(row.last_runtime_started_at) : null,
+      lastRuntimeStoppedAt: row.last_runtime_stopped_at != null ? String(row.last_runtime_stopped_at) : null,
     };
   }
 }

@@ -39,6 +39,8 @@ export type CodexParsedNotification =
   | { kind: 'plan'; payload: Record<string, unknown> }
   | { kind: 'title_updated'; title: string }
   | { kind: 'token_usage'; payload: Record<string, unknown> }
+  | { kind: 'subagent_event'; payload: Record<string, unknown> }
+  | { kind: 'subagent_thread'; payload: Record<string, unknown> }
   | { kind: 'error'; message: string }
   | { kind: 'ignore' };
 
@@ -90,6 +92,23 @@ export function parseCodexNotification(message: Record<string, unknown>): CodexP
   const params = asRecord(message.params);
 
   if (method === 'thread/started') {
+    // Check for subagent thread spawn
+    const thread = asRecord(params.thread ?? params);
+    const source = asRecord(thread.source);
+    const subAgent = asRecord(source.subAgent);
+    const threadSpawn = asRecord(subAgent.thread_spawn);
+    if (typeof threadSpawn.parent_thread_id === 'string') {
+      return {
+        kind: 'subagent_thread',
+        payload: {
+          threadId: typeof params.threadId === 'string' ? params.threadId : null,
+          parentThreadId: threadSpawn.parent_thread_id,
+          depth: typeof threadSpawn.depth === 'number' ? threadSpawn.depth : 1,
+          agentNickname: typeof threadSpawn.agent_nickname === 'string' ? threadSpawn.agent_nickname : null,
+          agentRole: typeof threadSpawn.agent_role === 'string' ? threadSpawn.agent_role : null,
+        },
+      };
+    }
     return {
       kind: 'state',
       state: 'idle',
@@ -157,6 +176,26 @@ export function parseCodexNotification(message: Record<string, unknown>): CodexP
 
   if (method === 'item/fileChange/requestApproval' || method === 'item/commandExecution/requestApproval' || method === 'approval/requested') {
     return { kind: 'approval', payload: params };
+  }
+
+  // Subagent (collabAgentToolCall) item events
+  if (method === 'item/started' || method === 'item/completed') {
+    const item = asRecord(params.item);
+    if (item.type === 'collabAgentToolCall') {
+      return {
+        kind: 'subagent_event',
+        payload: {
+          tool: item.tool,
+          status: item.status,
+          senderThreadId: item.senderThreadId,
+          receiverThreadIds: Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds : [],
+          agentsStates: asRecord(item.agentsStates),
+          prompt: typeof item.prompt === 'string' ? item.prompt : null,
+          model: typeof item.model === 'string' ? item.model : null,
+          itemId: item.id,
+        },
+      };
+    }
   }
 
   // Thread title update
@@ -523,6 +562,12 @@ export class CodexCliAdapter implements RuntimeAdapter {
         break;
       case 'token_usage':
         sink.emitTokenUsage(conversationId, parsed.payload);
+        break;
+      case 'subagent_event':
+        sink.emitSubagentEvent(conversationId, parsed.payload);
+        break;
+      case 'subagent_thread':
+        sink.emitSubagentThreadStarted(conversationId, parsed.payload);
         break;
       case 'error':
         handle.isRunning = false;

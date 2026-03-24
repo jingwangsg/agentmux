@@ -198,6 +198,19 @@ export default function MessageBubble({ item, backend, onRewind, onCopy, onActio
     );
   }
 
+  if (item.kind === 'subagent') {
+    return (
+      <details className="tool-section subagent-section" open={!item.collapsed}>
+        <summary>
+          <span className="subagent-badge active" />
+          {item.title}
+        </summary>
+        {item.body ? <div className="tool-section-body">{item.body}</div> : null}
+        {item.details ? <pre className="tool-section-body">{item.details}</pre> : null}
+      </details>
+    );
+  }
+
   if (item.kind === 'error') {
     return (
       <div className="msg msg-error">

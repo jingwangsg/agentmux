@@ -572,6 +572,117 @@ body {
   cursor: not-allowed;
 }
 
+/* Back to parent button */
+.back-to-parent {
+  font-size: 12px;
+  color: var(--text-2);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-family: var(--font-body);
+  white-space: nowrap;
+}
+
+.back-to-parent:hover {
+  color: var(--text-0);
+}
+
+/* ── Subagents Panel ── */
+.subagents-panel {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.subagents-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+
+.subagents-panel-header:hover {
+  background: var(--bg-surface);
+}
+
+.subagents-panel-arrow {
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.subagents-panel-list {
+  border-top: 1px solid var(--border);
+}
+
+.subagent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.subagent-row:hover {
+  background: var(--bg-surface);
+}
+
+.subagent-badge {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.subagent-badge.active { background: var(--green); }
+.subagent-badge.waiting { background: var(--amber); }
+.subagent-badge.done { background: var(--text-3); }
+
+.subagent-info {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.subagent-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-0);
+  white-space: nowrap;
+}
+
+.subagent-status-text {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.subagent-summary {
+  font-size: 12px;
+  color: var(--text-3);
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: auto;
+}
+
+.subagent-section summary .subagent-badge {
+  display: inline-block;
+  margin-right: 4px;
+}
+
 /* Assistant: left-aligned prose, no background */
 .msg-assistant {
   align-items: flex-start;

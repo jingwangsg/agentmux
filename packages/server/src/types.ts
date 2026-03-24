@@ -31,6 +31,9 @@ export type EventType =
   | 'claude.step'
   | 'approval.request'
   | 'token_usage'
+  | 'subagent.spawned'
+  | 'subagent.status'
+  | 'subagent.completed'
   | 'error';
 
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
@@ -69,6 +72,10 @@ export interface ConversationRecord {
   cwd: string | null;
   config: ConversationConfig;
   resumeHandle: Record<string, unknown> | null;
+  parentConversationId: string | null;
+  depth: number;
+  agentNickname: string | null;
+  agentRole: string | null;
   createdAt: string;
   updatedAt: string;
   lastRuntimeStartedAt: string | null;

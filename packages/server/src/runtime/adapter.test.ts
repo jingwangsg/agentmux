@@ -20,6 +20,8 @@ function createMinimalSink(): RuntimeEventSink {
     emitResumeHandle: () => undefined,
     emitTitleUpdate: () => undefined,
     emitTokenUsage: () => undefined,
+    emitSubagentEvent: () => undefined,
+    emitSubagentThreadStarted: () => undefined,
   };
 }
 
@@ -41,6 +43,10 @@ describe('adapter contracts', () => {
       cwd: null,
       config: {},
       resumeHandle: null,
+      parentConversationId: null,
+      depth: 0,
+      agentNickname: null,
+      agentRole: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
       lastRuntimeStartedAt: null,

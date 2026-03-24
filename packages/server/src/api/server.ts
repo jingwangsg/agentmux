@@ -73,6 +73,15 @@ export function createServer(conversationManager: ConversationManager) {
     }
   });
 
+  app.get('/api/conversations/:id/children', (req, res) => {
+    const conversation = conversationManager.getConversation(req.params.id);
+    if (!conversation) {
+      res.status(404).json({ error: 'Conversation not found' });
+      return;
+    }
+    res.json({ children: conversationManager.listChildConversations(req.params.id) });
+  });
+
   app.get('/api/conversations/:id/events', (req, res) => {
     const conversation = conversationManager.getConversation(req.params.id);
     if (!conversation) {

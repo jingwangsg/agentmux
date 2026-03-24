@@ -17,6 +17,8 @@ export interface RuntimeEventSink {
   emitResumeHandle(conversationId: string, handle: Record<string, unknown>): void;
   emitTitleUpdate(conversationId: string, title: string): void;
   emitTokenUsage(conversationId: string, payload: Record<string, unknown>): void;
+  emitSubagentEvent(conversationId: string, payload: Record<string, unknown>): void;
+  emitSubagentThreadStarted(conversationId: string, payload: Record<string, unknown>): void;
 }
 
 export interface RuntimeAdapter {

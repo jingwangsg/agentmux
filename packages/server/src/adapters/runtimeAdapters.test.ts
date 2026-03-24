@@ -36,6 +36,8 @@ function createSink() {
     emitResumeHandle: (...args) => void calls.push({ kind: 'resume_handle', args }),
     emitTitleUpdate: (...args) => void calls.push({ kind: 'title_update', args }),
     emitTokenUsage: (...args) => void calls.push({ kind: 'token_usage', args }),
+    emitSubagentEvent: (...args) => void calls.push({ kind: 'subagent_event', args }),
+    emitSubagentThreadStarted: (...args) => void calls.push({ kind: 'subagent_thread', args }),
   };
   return { sink, calls };
 }
@@ -50,6 +52,10 @@ const conversation: ConversationRecord = {
   resumeHandle: null,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
+  parentConversationId: null,
+  depth: 0,
+  agentNickname: null,
+  agentRole: null,
   lastRuntimeStartedAt: null,
   lastRuntimeStoppedAt: null,
 };

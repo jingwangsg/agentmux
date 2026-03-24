@@ -30,6 +30,8 @@ export type EventType =
   | 'codex.request'
   | 'claude.step'
   | 'approval.request'
+  | 'plan_exit.request'
+  | 'question.request'
   | 'token_usage'
   | 'subagent.spawned'
   | 'subagent.status'

@@ -13,6 +13,8 @@ export interface RuntimeEventSink {
   emitCodexRequest(conversationId: string, payload: Record<string, unknown>): void;
   emitClaudeStep(conversationId: string, payload: Record<string, unknown>): void;
   emitApprovalRequest(conversationId: string, payload: Record<string, unknown>): void;
+  emitPlanExitRequest(conversationId: string, payload: Record<string, unknown>): void;
+  emitQuestionRequest(conversationId: string, payload: Record<string, unknown>): void;
   emitError(conversationId: string, message: string): void;
   emitResumeHandle(conversationId: string, handle: Record<string, unknown>): void;
   emitTitleUpdate(conversationId: string, title: string): void;

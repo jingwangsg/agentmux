@@ -2,6 +2,8 @@ import type { StoredEvent as ConversationEvent } from '../lib/types';
 
 export type TimelineActionKind = 'approve' | 'deny';
 
+export type TimelineRequestKind = 'approval' | 'question' | 'plan_exit';
+
 export type TimelineItem = {
   id: string;
   kind: string;
@@ -13,6 +15,8 @@ export type TimelineItem = {
   actions?: Array<{ key: string; label: string; kind: TimelineActionKind }>;
   hidden?: boolean;
   collapsed?: boolean;
+  requestKind?: TimelineRequestKind;
+  agentStatus?: 'active' | 'waiting' | 'done';
 };
 
 export function tryParseJsonObject(value: string): Record<string, unknown> | null {
@@ -30,6 +34,12 @@ export function stringifyDetails(payload: Record<string, unknown>): string | und
 }
 
 export function readPayloadText(payload: Record<string, unknown>): string {
+  for (const key of ['questionText', 'prompt', 'description']) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
   for (const key of ['content', 'message', 'output', 'status', 'summary', 'delta', 'text', 'command']) {
     const value = payload[key];
     if (typeof value === 'string' && value.trim()) {
@@ -41,6 +51,28 @@ export function readPayloadText(payload: Record<string, unknown>): string {
     return readPayloadText(nested);
   }
   return '';
+}
+
+export function readVisibleText(payload: Record<string, unknown>): string {
+  const direct = readPayloadText(payload);
+  if (direct) return direct;
+
+  const nestedKeys = ['result', 'turn', 'item', 'request', 'tool_input', 'input'];
+  for (const key of nestedKeys) {
+    const value = payload[key];
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const nested = readPayloadText(value as Record<string, unknown>);
+      if (nested) return nested;
+    }
+  }
+
+  return '';
+}
+
+export function summarizeForPreview(payload: Record<string, unknown>, maxLength = 160): string | undefined {
+  const text = readVisibleText(payload);
+  if (!text) return undefined;
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
 export function extractToolLabel(payload: Record<string, unknown>): { label: string; preview: string } {

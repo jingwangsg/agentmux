@@ -68,6 +68,9 @@ export class ConversationManager implements RuntimeEventSink {
     return conversation;
   }
 
+  // NOTE: --permission-mode is set at CLI spawn time only. Mid-session mode changes
+  // update the DB config but do NOT reach the running CLI process. The change takes
+  // effect on the next process spawn (new conversation or after process exit).
   public updateConversationConfig(conversationId: string, patch: Partial<ConversationConfig>): ConversationRecord {
     const conversation = this.requireConversation(conversationId);
     const now = new Date().toISOString();
@@ -87,6 +90,18 @@ export class ConversationManager implements RuntimeEventSink {
       payload: { action: 'config_updated', config: updated.config },
       createdAt: now,
     });
+
+    // Warn if mode changed while runtime is attached
+    if (patch.mode && patch.mode !== conversation.config.mode && this.runtimeStates.get(conversationId)?.attached) {
+      this.recordEvent({
+        id: nanoid(),
+        conversationId,
+        type: 'runtime.state',
+        payload: { state: 'running', detail: 'Mode change will take effect on next session start' },
+        createdAt: now,
+      });
+    }
+
     return updated;
   }
 
@@ -360,6 +375,28 @@ export class ConversationManager implements RuntimeEventSink {
       id: nanoid(),
       conversationId,
       type: 'approval.request',
+      payload,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  public emitPlanExitRequest(conversationId: string, payload: Record<string, unknown>): void {
+    this.setConversationState(conversationId, 'waiting_input');
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: 'plan_exit.request',
+      payload,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  public emitQuestionRequest(conversationId: string, payload: Record<string, unknown>): void {
+    this.setConversationState(conversationId, 'waiting_input');
+    this.recordEvent({
+      id: nanoid(),
+      conversationId,
+      type: 'question.request',
       payload,
       createdAt: new Date().toISOString(),
     });

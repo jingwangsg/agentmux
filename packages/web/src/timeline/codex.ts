@@ -1,18 +1,43 @@
 import type { StoredEvent as ConversationEvent } from '../lib/types';
-import { extractToolLabel, readPayloadText, stringifyDetails, summarizeRuntimeState, type TimelineItem } from './shared';
+import { extractToolLabel, readPayloadText, readVisibleText, stringifyDetails, summarizeForPreview, summarizeRuntimeState, type TimelineItem } from './shared';
 
-function requestActions(): TimelineItem['actions'] {
+function requestActions(requestKind: TimelineItem['requestKind']): TimelineItem['actions'] {
+  if (requestKind === 'plan_exit') {
+    return [
+      { key: 'approve', label: 'Continue', kind: 'approve' },
+      { key: 'deny', label: 'Stay In Plan Mode', kind: 'deny' },
+    ];
+  }
+
+  if (requestKind === 'question') {
+    return [{ key: 'approve', label: 'Send', kind: 'approve' }];
+  }
+
   return [
     { key: 'approve', label: 'Approve', kind: 'approve' },
     { key: 'deny', label: 'Deny', kind: 'deny' },
   ];
 }
 
+function resolveRequestKind(event: ConversationEvent): TimelineItem['requestKind'] {
+  const requestKind = typeof event.payload.requestKind === 'string' ? event.payload.requestKind : '';
+  if (requestKind === 'approval' || requestKind === 'question' || requestKind === 'plan_exit') return requestKind;
+  if (event.type === 'approval.request') return 'approval';
+  if (event.type === 'question.request') return 'question';
+  if (event.type === 'plan_exit.request') return 'plan_exit';
+  return 'approval';
+}
+
+function formatModelLabel(model: unknown): string | null {
+  if (typeof model !== 'string') return null;
+  const trimmed = model.trim();
+  if (!trimmed) return null;
+  return trimmed;
+}
+
 export function buildCodexTimeline(events: ConversationEvent[]): TimelineItem[] {
   const items: TimelineItem[] = [];
   let bufferedAssistant = '';
-  let lastUserMessageId: string | undefined;
-
   const flushAssistant = (eventId: string): void => {
     const content = bufferedAssistant.trim();
     if (!content) return;
@@ -26,7 +51,6 @@ export function buildCodexTimeline(events: ConversationEvent[]): TimelineItem[] 
     if (event.type === 'message.user') {
       flushAssistant(event.id);
       items.push({ id: event.id, kind: 'user', title: 'You', body: String(event.payload.content ?? ''), event });
-      lastUserMessageId = event.id;
       continue;
     }
     if (event.type === 'message.assistant.delta') {
@@ -56,11 +80,14 @@ export function buildCodexTimeline(events: ConversationEvent[]): TimelineItem[] 
       const title = toolInfo.label !== 'Tool'
         ? `${toolInfo.label}${toolInfo.preview ? `: ${toolInfo.preview}` : ''}`
         : `${itemType.replace(/_/g, ' ')} · ${stage}`;
+      const body = itemType === 'reasoning'
+        ? (typeof event.payload.summary === 'string' ? event.payload.summary : undefined) ?? summarizeForPreview(event.payload)
+        : summarizeForPreview(event.payload);
       items.push({
         id: event.id,
         kind: itemType === 'reasoning' ? 'plan' : 'tool',
         title,
-        body: readPayloadText(event.payload) || undefined,
+        body,
         details: stringifyDetails(event.payload),
         event,
         collapsed: true,
@@ -68,16 +95,22 @@ export function buildCodexTimeline(events: ConversationEvent[]): TimelineItem[] 
       continue;
     }
 
-    if (event.type === 'codex.request' || event.type === 'interactive.request' || event.type === 'approval.request') {
-      const requestType = typeof event.payload.requestType === 'string' ? event.payload.requestType : event.type;
+    if (event.type === 'interactive.request' || event.type === 'approval.request' || event.type === 'question.request' || event.type === 'plan_exit.request') {
+      const requestKind = resolveRequestKind(event);
+      const title = requestKind === 'approval'
+        ? 'Approval required'
+        : requestKind === 'question'
+          ? 'Question'
+          : 'Plan mode decision';
       items.push({
         id: event.id,
-        kind: 'request',
-        title: `${requestType} required`,
-        body: readPayloadText(event.payload) || undefined,
+        kind: requestKind === 'question' ? 'question' : requestKind === 'plan_exit' ? 'plan_exit' : 'request',
+        requestKind,
+        title,
+        body: readVisibleText(event.payload) || undefined,
         details: stringifyDetails(event.payload),
         event,
-        actions: requestActions(),
+        actions: requestActions(requestKind),
       });
       continue;
     }
@@ -91,7 +124,7 @@ export function buildCodexTimeline(events: ConversationEvent[]): TimelineItem[] 
         id: event.id,
         kind: 'tool',
         title,
-        body: readPayloadText(event.payload) || undefined,
+        body: summarizeForPreview(event.payload),
         details: stringifyDetails(event.payload),
         event,
         collapsed: true,
@@ -100,22 +133,28 @@ export function buildCodexTimeline(events: ConversationEvent[]): TimelineItem[] 
     }
 
     if (event.type === 'plan.message') {
-      items.push({ id: event.id, kind: 'plan', title: 'Reasoning', body: readPayloadText(event.payload) || undefined, details: stringifyDetails(event.payload), event, collapsed: true });
+      items.push({ id: event.id, kind: 'plan', title: 'Reasoning', body: summarizeForPreview(event.payload), details: stringifyDetails(event.payload), event, collapsed: true });
       continue;
     }
 
     if (event.type === 'subagent.spawned' || event.type === 'subagent.status' || event.type === 'subagent.completed') {
       const tool = typeof event.payload.tool === 'string' ? event.payload.tool : 'subagent';
-      const receiverIds = Array.isArray(event.payload.receiverThreadIds) ? event.payload.receiverThreadIds as string[] : [];
       const statusText = typeof event.payload.status === 'string' ? event.payload.status : '';
+      const prompt = typeof event.payload.prompt === 'string' ? event.payload.prompt : '';
+      const description = typeof event.payload.description === 'string' ? event.payload.description : '';
+      const agentStatus = event.type === 'subagent.completed' ? 'done' as const
+        : statusText === 'running' ? 'active' as const
+        : statusText === 'completed' ? 'done' as const
+        : 'active' as const;
       items.push({
         id: event.id,
-        kind: 'subagent',
-        title: `${tool}${receiverIds.length > 0 ? ` (${receiverIds.length} agent${receiverIds.length !== 1 ? 's' : ''})` : ''}`,
-        body: (typeof event.payload.prompt === 'string' ? event.payload.prompt : '') || statusText,
+        kind: 'agent',
+        title: description || tool,
+        body: prompt || statusText || undefined,
         details: stringifyDetails(event.payload),
         event,
-        collapsed: tool !== 'spawnAgent',
+        collapsed: false,
+        agentStatus,
       });
       continue;
     }

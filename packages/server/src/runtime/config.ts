@@ -126,13 +126,7 @@ function extractJsonArrayIfExists(filePath: string, key: string): unknown[] {
 }
 
 function titleizeModel(value: string): string {
-  // Strip provider prefix (e.g. "openai/openai/gpt-5.4" → "gpt-5.4")
-  const bare = value.includes('/') ? value.slice(value.lastIndexOf('/') + 1) : value;
-  return bare
-    .replace(/^claude-/, '')
-    .replace(/^gpt-/, 'GPT-')
-    .replace(/-/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
+  return value.trim();
 }
 
 function dedupeCandidates(candidates: ConfigCandidate[], preferredValues: Array<string | undefined>): ConfigCandidate[] {

@@ -20,7 +20,7 @@ interface MessageBubbleProps {
   backend?: BackendType;
   onRewind?: (options: RewindOptions) => void;
   onCopy?: (text: string) => void;
-  onAction?: (kind: ActionKind, event?: ConversationEvent) => void;
+  onAction?: (kind: ActionKind, event?: ConversationEvent, extra?: Record<string, unknown>) => void;
 }
 
 function MarkdownBody({ text }: { text: string }) {
@@ -139,6 +139,47 @@ function UserMessage({ item, backend, onRewind, onCopy }: MessageBubbleProps) {
   );
 }
 
+function QuestionMessage({ item, onAction }: MessageBubbleProps) {
+  const [answer, setAnswer] = useState('');
+  const sendLabel = item.actions?.[0]?.label ?? 'Send';
+
+  const handleSubmit = () => {
+    if (!answer.trim() || !item.event) return;
+    onAction?.('approve', item.event, { userAnswer: answer.trim(), originalQuestion: item.body ?? '' });
+  };
+
+  return (
+    <div className="msg msg-question">
+      <div className="msg-question-label">Codex has a question</div>
+      <div className="msg-question-body msg-prose">
+        <MarkdownBody text={item.body ?? ''} />
+      </div>
+      <div className="msg-question-input-row">
+        <textarea
+          className="msg-question-textarea"
+          value={answer}
+          onChange={(e) => setAnswer(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              handleSubmit();
+            }
+          }}
+          placeholder="Type your answer..."
+          rows={2}
+        />
+        <button
+          className="msg-action-btn approve"
+          disabled={!answer.trim()}
+          onClick={handleSubmit}
+        >
+          {sendLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function MessageBubble({ item, backend, onRewind, onCopy, onAction }: MessageBubbleProps) {
   if (item.kind === 'user') {
     return <UserMessage item={item} backend={backend} onRewind={onRewind} onCopy={onCopy} onAction={onAction} />;
@@ -178,6 +219,34 @@ export default function MessageBubble({ item, backend, onRewind, onCopy, onActio
     );
   }
 
+  if (item.kind === 'plan_exit') {
+    return (
+      <div className="msg msg-plan-exit">
+        <div className="msg-plan-exit-label">Codex plan mode</div>
+        <div className="msg-plan-exit-body msg-prose">
+          <MarkdownBody text={item.body ?? ''} />
+        </div>
+        {item.actions?.length ? (
+          <div className="msg-request-actions">
+            {item.actions.map((action) => (
+              <button
+                key={action.key}
+                className={`msg-action-btn ${action.kind === 'approve' ? 'approve' : 'plan-continue'}`}
+                onClick={() => onAction?.(action.kind, item.event)}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (item.kind === 'question') {
+    return <QuestionMessage item={item} backend={backend} onRewind={onRewind} onCopy={onCopy} onAction={onAction} />;
+  }
+
   if (item.kind === 'request') {
     return (
       <div className="msg msg-request">
@@ -202,15 +271,20 @@ export default function MessageBubble({ item, backend, onRewind, onCopy, onActio
     );
   }
 
-  if (item.kind === 'subagent') {
+  if (item.kind === 'agent' || item.kind === 'subagent') {
+    const status = item.agentStatus ?? 'active';
     return (
-      <details className="tool-section subagent-section" open={!item.collapsed}>
-        <summary>
-          <span className="subagent-badge active" />
-          {item.title}
+      <details className="agent-section" open={!item.collapsed}>
+        <summary className="agent-summary">
+          <span className={`agent-dot ${status}`} />
+          <strong>Agent:</strong> <span className="agent-title">{item.title}</span>
         </summary>
-        {item.body ? <div className="tool-section-body tool-preview">{item.body.slice(0, 200)}</div> : null}
-        {item.details ? <pre className="tool-section-body">{item.details}</pre> : null}
+        {item.body ? (
+          <div className="agent-body">
+            <span className="agent-label">IN</span>
+            <div className="agent-prompt">{item.body}</div>
+          </div>
+        ) : null}
       </details>
     );
   }

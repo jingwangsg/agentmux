@@ -46,9 +46,7 @@ function getInitialTheme(): Theme {
 function getCandidateLabel(candidates: ConfigCandidate[], value: string): string {
   const found = candidates.find((c) => c.value === value);
   if (found) return found.label;
-  // Fallback: strip provider prefix, titleize
-  const bare = value.includes('/') ? value.slice(value.lastIndexOf('/') + 1) : value;
-  return bare.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  return value;
 }
 
 function buildTimelineForBackend(backend: BackendType, events: ConversationEvent[]): TimelineItem[] {
@@ -204,12 +202,21 @@ export default function App() {
     await controlConversation(activeId, action);
   }
 
-  function handleRequestResponse(kind: 'approve' | 'deny', event?: ConversationEvent) {
+  function handleRequestResponse(kind: 'approve' | 'deny', event?: ConversationEvent, extra?: Record<string, unknown>) {
     if (!activeId || !event) return;
+
+    const requestKind = typeof event.payload.requestKind === 'string'
+      ? event.payload.requestKind
+      : event.type === 'plan_exit.request'
+        ? 'plan_exit'
+        : event.type === 'question.request'
+          ? 'question'
+          : 'approval';
+
     connRef.current?.send(JSON.stringify({
       type: 'interactive_response',
       conversationId: activeId,
-      payload: { kind: 'approval', action: kind, requestId: event.payload.requestId, response: kind },
+      payload: { kind: requestKind, action: kind, requestId: event.payload.requestId, requestKind, ...extra },
     }));
   }
 
@@ -349,7 +356,7 @@ export default function App() {
                     backend={activeConversation?.backend}
                     onRewind={(opts) => void rewindConversation(activeId!, { ...opts, dryRun: false })}
                     onCopy={(text) => void navigator.clipboard.writeText(text)}
-                    onAction={(kind, event) => handleRequestResponse(kind, event)}
+                    onAction={(kind, event, extra) => handleRequestResponse(kind, event, extra)}
                   />
                 ))}
                 <div ref={messagesEndRef} />

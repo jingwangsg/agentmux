@@ -39,18 +39,41 @@ export function buildClaudeTimeline(events: ConversationEvent[]): TimelineItem[]
       const stepType = typeof event.payload.stepType === 'string' ? event.payload.stepType : event.type === 'plan.message' ? 'plan' : 'step';
       items.push({
         id: event.id,
-        kind: stepType === 'plan' ? 'plan' : stepType === 'permit' ? 'request' : 'tool',
+        kind: stepType === 'plan' ? 'plan' : 'tool',
         title: stepType.replace(/_/g, ' '),
         body: readPayloadText(event.payload) || undefined,
         details: stringifyDetails(event.payload),
         event,
-        collapsed: stepType !== 'permit',
-        actions: stepType === 'permit'
-          ? [
-              { key: 'approve', label: 'Approve', kind: 'approve' },
-              { key: 'deny', label: 'Deny', kind: 'deny' },
-            ]
-          : undefined,
+        collapsed: true,
+      });
+      continue;
+    }
+
+    if (event.type === 'plan_exit.request') {
+      const planContent = typeof event.payload.planContent === 'string' ? event.payload.planContent : '';
+      items.push({
+        id: event.id,
+        kind: 'plan_exit',
+        title: "Claude's Plan",
+        body: planContent || readPayloadText(event.payload) || undefined,
+        details: stringifyDetails(event.payload),
+        event,
+        actions: [
+          { key: 'approve', label: 'Accept this plan', kind: 'approve' },
+          { key: 'deny', label: 'Continue planning', kind: 'deny' },
+        ],
+      });
+      continue;
+    }
+
+    if (event.type === 'question.request') {
+      const questionText = typeof event.payload.questionText === 'string' ? event.payload.questionText : '';
+      items.push({
+        id: event.id,
+        kind: 'question',
+        title: 'Claude has a question',
+        body: questionText || readPayloadText(event.payload) || undefined,
+        event,
       });
       continue;
     }
@@ -71,8 +94,44 @@ export function buildClaudeTimeline(events: ConversationEvent[]): TimelineItem[]
       continue;
     }
 
+    if (event.type === 'subagent.spawned' || event.type === 'subagent.status' || event.type === 'subagent.completed') {
+      const tool = typeof event.payload.tool === 'string' ? event.payload.tool : 'subagent';
+      const prompt = typeof event.payload.prompt === 'string' ? event.payload.prompt : '';
+      const statusText = typeof event.payload.status === 'string' ? event.payload.status : '';
+      const agentStatus = event.type === 'subagent.completed' ? 'done' as const
+        : statusText === 'running' ? 'active' as const
+        : statusText === 'completed' ? 'done' as const
+        : 'active' as const;
+      const description = typeof event.payload.description === 'string' ? event.payload.description : '';
+      items.push({
+        id: event.id,
+        kind: 'agent',
+        title: description || tool,
+        body: prompt || statusText || undefined,
+        details: stringifyDetails(event.payload),
+        event,
+        collapsed: false,
+        agentStatus,
+      });
+      continue;
+    }
+
     if (event.type === 'tool.call' || event.type === 'tool.result') {
       const toolInfo = extractToolLabel(event.payload);
+      // Detect Agent tool calls and render with agent styling
+      if (event.type === 'tool.call' && toolInfo.label === 'Agent') {
+        items.push({
+          id: event.id,
+          kind: 'agent',
+          title: toolInfo.preview || 'Agent',
+          body: readPayloadText(event.payload) || undefined,
+          details: stringifyDetails(event.payload),
+          event,
+          collapsed: false,
+          agentStatus: 'active',
+        });
+        continue;
+      }
       const title = event.type === 'tool.call'
         ? `${toolInfo.label}${toolInfo.preview ? `: ${toolInfo.preview}` : ''}`
         : `${toolInfo.label} result`;

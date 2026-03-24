@@ -16,6 +16,8 @@ function createMinimalSink(): RuntimeEventSink {
     emitCodexRequest: () => undefined,
     emitClaudeStep: () => undefined,
     emitApprovalRequest: () => undefined,
+    emitPlanExitRequest: () => undefined,
+    emitQuestionRequest: () => undefined,
     emitError: () => undefined,
     emitResumeHandle: () => undefined,
     emitTitleUpdate: () => undefined,

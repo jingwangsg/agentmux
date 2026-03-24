@@ -668,6 +668,13 @@ body {
   white-space: nowrap;
 }
 
+.subagent-model {
+  font-size: 12px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
 .subagent-summary {
   font-size: 12px;
   color: var(--text-3);
@@ -681,6 +688,80 @@ body {
 .subagent-section summary .subagent-badge {
   display: inline-block;
   margin-right: 4px;
+}
+
+/* ── Agent timeline sections (Claude Code style) ── */
+.agent-section {
+  border-radius: 8px;
+  margin: 6px 0;
+  background: transparent;
+}
+.agent-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-1);
+  padding: 6px 4px;
+  border-radius: 6px;
+  list-style: none;
+}
+.agent-summary::-webkit-details-marker { display: none; }
+.agent-summary::before {
+  content: '\25B8';
+  font-size: 10px;
+  color: var(--text-3);
+  transition: transform 0.15s;
+}
+.agent-section[open] > .agent-summary::before {
+  transform: rotate(90deg);
+}
+.agent-summary:hover {
+  background: var(--bg-surface);
+}
+.agent-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.agent-dot.active { background: var(--green); }
+.agent-dot.waiting { background: var(--amber); }
+.agent-dot.done { background: var(--text-3); }
+.agent-title {
+  font-weight: 400;
+  color: var(--text-2);
+}
+.agent-body {
+  display: flex;
+  gap: 10px;
+  margin: 2px 0 8px 20px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--bg-surface);
+  border-left: 3px solid var(--border);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.agent-label {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+.agent-prompt {
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
 }
 
 /* Assistant: left-aligned prose, no background */
@@ -885,8 +966,86 @@ body {
   color: var(--text-1);
 }
 
+.msg-action-btn.plan-continue {
+  background: transparent;
+  color: var(--text-1);
+  border: 1px solid var(--border);
+}
+
 .msg-action-btn:hover {
   opacity: 0.85;
+}
+
+.msg-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Plan Exit */
+.msg-plan-exit {
+  border: 1px solid var(--green);
+  border-radius: 12px;
+  padding: 16px;
+  background: color-mix(in srgb, var(--green) 6%, transparent);
+}
+
+.msg-plan-exit-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--green);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.msg-plan-exit-body {
+  margin-bottom: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* Question */
+.msg-question {
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 16px;
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+.msg-question-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.msg-question-body {
+  margin-bottom: 12px;
+}
+
+.msg-question-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.msg-question-textarea {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-0);
+  font-family: var(--font-body);
+  font-size: 14px;
+  resize: vertical;
+}
+
+.msg-question-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 /* Error */

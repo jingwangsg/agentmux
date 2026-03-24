@@ -30,8 +30,137 @@ export type ClaudeParsedEvent =
   | { kind: 'error'; message: string }
   | { kind: 'ignore' };
 
+type ClaudeInteractiveKind = 'approval' | 'question' | 'plan_exit';
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function readTextCandidate(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(readTextCandidate).join('').trim();
+  }
+  const record = asRecord(value);
+  for (const key of ['text', 'message', 'content', 'question', 'plan', 'prompt', 'description', 'result']) {
+    const candidate = record[key];
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  if (Array.isArray(record.content)) {
+    return readTextCandidate(record.content);
+  }
+  if (Array.isArray(record.parts)) {
+    return readTextCandidate(record.parts);
+  }
+  return '';
+}
+
+function looksLikePlanText(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return normalized.includes('exit plan mode')
+    || normalized.includes('approve this plan')
+    || normalized.includes('permit to execute')
+    || normalized.includes('leave plan mode')
+    || normalized.includes('switch out of plan mode');
+}
+
+function normalizeClaudeToolName(payload: Record<string, unknown>): string {
+  const raw = typeof payload.name === 'string'
+    ? payload.name
+    : typeof payload.tool_name === 'string'
+      ? payload.tool_name
+      : typeof payload.tool === 'string'
+        ? payload.tool
+        : '';
+  return raw.trim();
+}
+
+export function normalizeClaudeRequestKind(subtype: string, payload: Record<string, unknown>): ClaudeInteractiveKind {
+  if (subtype === 'can_use_tool') {
+    const toolName = normalizeClaudeToolName(payload);
+    if (toolName === 'ExitPlanMode') return 'plan_exit';
+    if (toolName === 'AskUserQuestion') return 'question';
+    return 'approval';
+  }
+
+  const requestKind = typeof payload.requestKind === 'string' ? payload.requestKind : '';
+  if (requestKind === 'approval' || requestKind === 'question' || requestKind === 'plan_exit') {
+    return requestKind;
+  }
+
+  const text = readTextCandidate(payload);
+  if (looksLikePlanText(text)) {
+    return 'plan_exit';
+  }
+  return 'question';
+}
+
+export function normalizeClaudeInteractivePayload(subtype: string, requestId: string, payload: Record<string, unknown>): Record<string, unknown> {
+  const toolInput = asRecord(payload.tool_input ?? payload.input ?? payload.arguments);
+  const toolName = normalizeClaudeToolName(payload);
+  const requestKind = normalizeClaudeRequestKind(subtype, payload);
+  const message = readTextCandidate(toolInput) || readTextCandidate(payload);
+  return {
+    ...payload,
+    requestId,
+    requestKind,
+    toolName,
+    toolInput,
+    message,
+  };
+}
+
+export function extractClaudeSubagentPayload(payload: Record<string, unknown>): Record<string, unknown> | null {
+  const toolName = normalizeClaudeToolName(payload);
+  if (!toolName || !['Task', 'Agent', 'spawn_agent', 'spawnAgent'].includes(toolName)) {
+    return null;
+  }
+
+  const input = asRecord(payload.input ?? payload.tool_input ?? payload.arguments);
+  const agents = Array.isArray(input.agents) ? input.agents : [];
+  const receiverThreadIds = agents
+    .map((agent) => asRecord(agent))
+    .map((agent) => agent.thread_id)
+    .filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+
+  return {
+    tool: 'spawnAgent',
+    status: 'inProgress',
+    prompt: typeof input.prompt === 'string' ? input.prompt : readTextCandidate(input),
+    description: typeof input.description === 'string' ? input.description : toolName,
+    model: typeof input.model === 'string' ? input.model : null,
+    agentRole: typeof input.role === 'string' ? input.role : null,
+    agentNickname: typeof input.name === 'string' ? input.name : null,
+    receiverThreadIds,
+    rawToolName: toolName,
+    input,
+  };
+}
+
+export function extractClaudeSubagentResultPayload(payload: Record<string, unknown>): Record<string, unknown> | null {
+  const toolName = normalizeClaudeToolName(payload);
+  if (!toolName || !['Task', 'Agent', 'spawn_agent', 'spawnAgent'].includes(toolName)) {
+    return null;
+  }
+
+  const result = asRecord(payload.result ?? payload.output ?? payload.content);
+  const receiverThreadIds = Array.isArray(result.receiverThreadIds)
+    ? result.receiverThreadIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+    : [];
+
+  return {
+    tool: 'spawnAgent',
+    status: typeof result.status === 'string' ? result.status : 'completed',
+    prompt: readTextCandidate(result) || readTextCandidate(payload),
+    description: typeof result.description === 'string' ? result.description : toolName,
+    receiverThreadIds,
+    rawToolName: toolName,
+    output: result,
+  };
 }
 
 export function extractClaudeText(value: unknown): string {
@@ -210,7 +339,10 @@ export class ClaudeCliAdapter implements RuntimeAdapter {
       const originalQuestion = typeof payload.originalQuestion === 'string' ? payload.originalQuestion : '';
       responseBody = {
         behavior: 'allow',
-        updatedInput: { question: originalQuestion, answer: userAnswer },
+        updatedInput: {
+          ...(originalQuestion ? { question: originalQuestion } : {}),
+          answer: userAnswer,
+        },
       };
     } else {
       responseBody = { behavior: action === 'deny' ? 'deny' : 'allow' };
@@ -363,6 +495,12 @@ export class ClaudeCliAdapter implements RuntimeAdapter {
       case 'tool_call':
         sink.emitToolCall(conversationId, parsed.payload);
         sink.emitClaudeStep(conversationId, { stepType: 'tool_use', stage: 'started', ...parsed.payload });
+        {
+          const subagentPayload = extractClaudeSubagentPayload(parsed.payload);
+          if (subagentPayload) {
+            sink.emitSubagentEvent(conversationId, subagentPayload);
+          }
+        }
         break;
       case 'tool_output':
         sink.emitToolOutput(conversationId, parsed.payload);
@@ -370,6 +508,12 @@ export class ClaudeCliAdapter implements RuntimeAdapter {
       case 'tool_result':
         sink.emitToolResult(conversationId, parsed.payload);
         sink.emitClaudeStep(conversationId, { stepType: 'tool_result', stage: 'completed', ...parsed.payload });
+        {
+          const subagentPayload = extractClaudeSubagentResultPayload(parsed.payload);
+          if (subagentPayload) {
+            sink.emitSubagentEvent(conversationId, subagentPayload);
+          }
+        }
         break;
       case 'approval':
         handle.pendingRequestId = typeof parsed.payload.request_id === 'string' ? parsed.payload.request_id : handle.pendingRequestId;
@@ -390,11 +534,13 @@ export class ClaudeCliAdapter implements RuntimeAdapter {
     sink: RuntimeEventSink,
   ): void {
     handle.pendingRequestId = parsed.requestId;
+    const normalizedPayload = normalizeClaudeInteractivePayload(parsed.subtype, parsed.requestId, parsed.payload);
+    const requestKind = normalizedPayload.requestKind;
 
     switch (parsed.subtype) {
       case 'can_use_tool': {
-        const toolName = typeof parsed.payload.tool_name === 'string' ? parsed.payload.tool_name : '';
-        const toolInput = asRecord(parsed.payload.tool_input ?? parsed.payload.input);
+        const toolName = typeof normalizedPayload.toolName === 'string' ? normalizedPayload.toolName : '';
+        const toolInput = asRecord(normalizedPayload.toolInput);
 
         if (toolName === 'ExitPlanMode' && handle.permissionMode !== 'plan') {
           const autoResponse = {
@@ -410,60 +556,49 @@ export class ClaudeCliAdapter implements RuntimeAdapter {
           break;
         }
 
-        if (toolName === 'ExitPlanMode') {
-          // Plan exit: extract plan content from tool_input
+        if (requestKind === 'plan_exit') {
           const planContent = typeof toolInput.plan === 'string'
             ? toolInput.plan
             : typeof toolInput.plan_content === 'string'
               ? toolInput.plan_content
-              : typeof toolInput.content === 'string'
-                ? toolInput.content
-                : extractClaudeText(toolInput);
+              : readTextCandidate(toolInput) || readTextCandidate(parsed.payload);
           sink.emitPlanExitRequest(conversationId, {
-            requestId: parsed.requestId,
-            toolName,
+            ...normalizedPayload,
             planContent,
-            toolInput,
-            ...parsed.payload,
           });
           sink.emitState(conversationId, 'waiting_input', 'Plan review: ExitPlanMode');
           break;
         }
 
-        if (toolName === 'AskUserQuestion') {
-          // Question: extract the question text from tool_input
+        if (requestKind === 'question') {
           const questionText = typeof toolInput.question === 'string'
             ? toolInput.question
             : typeof toolInput.text === 'string'
               ? toolInput.text
-              : extractClaudeText(toolInput);
+              : readTextCandidate(toolInput) || readTextCandidate(parsed.payload);
           sink.emitQuestionRequest(conversationId, {
-            requestId: parsed.requestId,
-            toolName,
+            ...normalizedPayload,
             questionText,
-            toolInput,
-            ...parsed.payload,
           });
           sink.emitState(conversationId, 'waiting_input', 'Question from Claude');
           break;
         }
 
-        // Default: generic tool approval
-        sink.emitApprovalRequest(conversationId, {
-          requestId: parsed.requestId,
-          toolName,
-          toolInput,
-          ...parsed.payload,
-        });
+        sink.emitApprovalRequest(conversationId, normalizedPayload);
         sink.emitState(conversationId, 'waiting_input', `Tool permission: ${toolName}`);
         break;
       }
       case 'elicitation': {
-        // Surface as interactive request for the UI
-        sink.emitInteractiveRequest(conversationId, {
-          requestId: parsed.requestId,
-          ...parsed.payload,
-        });
+        if (requestKind === 'plan_exit') {
+          sink.emitPlanExitRequest(conversationId, normalizedPayload);
+        } else if (requestKind === 'question') {
+          sink.emitQuestionRequest(conversationId, {
+            ...normalizedPayload,
+            questionText: normalizedPayload.message,
+          });
+        } else {
+          sink.emitInteractiveRequest(conversationId, normalizedPayload);
+        }
         sink.emitState(conversationId, 'waiting_input', 'Elicitation request');
         break;
       }

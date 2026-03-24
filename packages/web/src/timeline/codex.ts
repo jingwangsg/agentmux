@@ -144,8 +144,9 @@ export function buildCodexTimeline(events: ConversationEvent[]): TimelineItem[] 
       const description = typeof event.payload.description === 'string' ? event.payload.description : '';
       const agentStatus = event.type === 'subagent.completed' ? 'done' as const
         : statusText === 'running' ? 'active' as const
+        : statusText === 'pendingInit' || statusText === 'inProgress' ? 'waiting' as const
         : statusText === 'completed' ? 'done' as const
-        : 'active' as const;
+        : 'waiting' as const;
       items.push({
         id: event.id,
         kind: 'agent',

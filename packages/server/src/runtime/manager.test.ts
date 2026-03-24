@@ -99,4 +99,30 @@ describe('ConversationManager', () => {
     await expect(manager.rewind(conversation.id, { message: 'x' })).rejects.toThrow(/Rewind is not supported/);
     internal.adapters.set('codex', original);
   });
+
+  it('normalizes spawn_agent subagent events and deduplicates child conversations', () => {
+    const { manager, seen } = setup();
+    const conversation = manager.createConversation({ backend: 'codex' });
+
+    manager.emitSubagentEvent(conversation.id, {
+      tool: 'spawn_agent',
+      status: 'inProgress',
+      receiverThreadIds: ['child-1'],
+      prompt: 'Inspect adapters',
+    });
+    manager.emitSubagentEvent(conversation.id, {
+      tool: 'spawnAgent',
+      status: 'inProgress',
+      receiverThreadIds: ['child-1'],
+      prompt: 'Inspect adapters',
+    });
+
+    const subagentEvents = seen.filter((event) => event.type === 'subagent.spawned');
+    expect(subagentEvents).toHaveLength(2);
+    expect(subagentEvents[0]?.payload.tool).toBe('spawnAgent');
+
+    const children = manager.listChildConversations(conversation.id);
+    expect(children).toHaveLength(1);
+    expect(children[0]?.resumeHandle).toMatchObject({ threadId: 'child-1' });
+  });
 });

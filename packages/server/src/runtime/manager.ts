@@ -453,12 +453,13 @@ export class ConversationManager implements RuntimeEventSink {
 
   public emitSubagentEvent(conversationId: string, payload: Record<string, unknown>): void {
     const tool = typeof payload.tool === 'string' ? payload.tool : '';
+    const normalizedTool = tool === 'spawn_agent' ? 'spawnAgent' : tool;
     const status = typeof payload.status === 'string' ? payload.status : '';
     const receiverThreadIds = Array.isArray(payload.receiverThreadIds) ? payload.receiverThreadIds as string[] : [];
 
     // Determine event type
     const eventType: 'subagent.spawned' | 'subagent.status' | 'subagent.completed' =
-      tool === 'spawnAgent' && status === 'inProgress' ? 'subagent.spawned'
+      normalizedTool === 'spawnAgent' && status === 'inProgress' ? 'subagent.spawned'
         : status === 'completed' || status === 'failed' ? 'subagent.completed'
         : 'subagent.status';
 
@@ -466,12 +467,12 @@ export class ConversationManager implements RuntimeEventSink {
       id: nanoid(),
       conversationId,
       type: eventType,
-      payload,
+      payload: normalizedTool === tool ? payload : { ...payload, tool: normalizedTool },
       createdAt: new Date().toISOString(),
     });
 
     // Auto-create child conversations for spawnAgent
-    if (tool === 'spawnAgent' && receiverThreadIds.length > 0) {
+    if (normalizedTool === 'spawnAgent' && receiverThreadIds.length > 0) {
       const parent = this.db.getConversation(conversationId);
       if (parent) {
         for (const childThreadId of receiverThreadIds) {

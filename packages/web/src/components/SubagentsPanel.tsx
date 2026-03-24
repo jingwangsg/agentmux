@@ -33,6 +33,10 @@ function mapAgentStatus(status: string): SubagentInfo['displayStatus'] {
   }
 }
 
+function normalizeToolName(tool: string): string {
+  return tool === 'spawn_agent' ? 'spawnAgent' : tool;
+}
+
 export function extractSubagents(events: ConversationEvent[]): SubagentInfo[] {
   const agentMap = new Map<string, SubagentInfo>();
 
@@ -40,18 +44,23 @@ export function extractSubagents(events: ConversationEvent[]): SubagentInfo[] {
     if (event.type !== 'subagent.spawned' && event.type !== 'subagent.status' && event.type !== 'subagent.completed') continue;
 
     const payload = event.payload;
-    const tool = typeof payload.tool === 'string' ? payload.tool : '';
+    const tool = normalizeToolName(typeof payload.tool === 'string' ? payload.tool : '');
     const receiverIds = Array.isArray(payload.receiverThreadIds)
       ? payload.receiverThreadIds as string[]
       : typeof payload.threadId === 'string' && payload.threadId
         ? [payload.threadId]
         : [];
     const agentsStates = typeof payload.agentsStates === 'object' && payload.agentsStates ? payload.agentsStates as Record<string, { status?: string; message?: string }> : {};
+    const payloadStatus = typeof payload.status === 'string' ? payload.status : null;
 
     for (const threadId of receiverIds) {
       const existing = agentMap.get(threadId);
       const agentState = agentsStates[threadId];
-      const rawStatus = typeof agentState?.status === 'string' ? agentState.status : existing?.status ?? 'pendingInit';
+      const rawStatus = typeof agentState?.status === 'string'
+        ? agentState.status
+        : receiverIds.length === 1 && payloadStatus
+          ? payloadStatus
+          : existing?.status ?? 'pendingInit';
 
       agentMap.set(threadId, {
         threadId,

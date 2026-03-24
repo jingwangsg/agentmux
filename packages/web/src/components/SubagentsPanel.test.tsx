@@ -41,4 +41,50 @@ describe('extractSubagents', () => {
       }),
     ]);
   });
+
+  it('uses top-level status updates for singular thread events', () => {
+    const events: StoredEvent[] = [
+      makeEvent('subagent.spawned', {
+        receiverThreadIds: ['child-1'],
+        agentsStates: { 'child-1': { status: 'pendingInit' } },
+        tool: 'spawnAgent',
+      }),
+      makeEvent('subagent.status', {
+        threadId: 'child-1',
+        status: 'running',
+      }),
+    ];
+
+    expect(extractSubagents(events)).toEqual([
+      expect.objectContaining({
+        threadId: 'child-1',
+        status: 'running',
+        displayStatus: 'active',
+      }),
+    ]);
+  });
+
+  it('normalizes snake_case spawn tool names without duplicating agents', () => {
+    const events: StoredEvent[] = [
+      makeEvent('subagent.spawned', {
+        receiverThreadIds: ['child-1'],
+        agentsStates: { 'child-1': { status: 'pendingInit' } },
+        tool: 'spawn_agent',
+      }),
+      makeEvent('subagent.status', {
+        threadId: 'child-1',
+        status: 'running',
+        tool: 'spawnAgent',
+      }),
+    ];
+
+    expect(extractSubagents(events)).toEqual([
+      expect.objectContaining({
+        threadId: 'child-1',
+        tool: 'spawnAgent',
+        status: 'running',
+        displayStatus: 'active',
+      }),
+    ]);
+  });
 });

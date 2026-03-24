@@ -139,7 +139,7 @@ function UserMessage({ item, backend, onRewind, onCopy }: MessageBubbleProps) {
   );
 }
 
-function QuestionMessage({ item, onAction }: MessageBubbleProps) {
+function QuestionMessage({ item, backend, onAction }: MessageBubbleProps) {
   const [answer, setAnswer] = useState('');
   const sendLabel = item.actions?.[0]?.label ?? 'Send';
 
@@ -150,7 +150,7 @@ function QuestionMessage({ item, onAction }: MessageBubbleProps) {
 
   return (
     <div className="msg msg-question">
-      <div className="msg-question-label">Codex has a question</div>
+      <div className="msg-question-label">{backend === 'claude' ? 'Claude has a question' : 'Codex has a question'}</div>
       <div className="msg-question-body msg-prose">
         <MarkdownBody text={item.body ?? ''} />
       </div>
@@ -222,7 +222,7 @@ export default function MessageBubble({ item, backend, onRewind, onCopy, onActio
   if (item.kind === 'plan_exit') {
     return (
       <div className="msg msg-plan-exit">
-        <div className="msg-plan-exit-label">Codex plan mode</div>
+        <div className="msg-plan-exit-label">{backend === 'claude' ? 'Claude plan mode' : 'Codex plan mode'}</div>
         <div className="msg-plan-exit-body msg-prose">
           <MarkdownBody text={item.body ?? ''} />
         </div>

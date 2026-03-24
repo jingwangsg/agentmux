@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { buildClaudeRewindRequest, extractClaudeText, parseClaudeLine } from './claudeCliAdapter.js';
+import {
+  buildClaudeRewindRequest,
+  extractClaudeSubagentPayload,
+  extractClaudeSubagentResultPayload,
+  extractClaudeText,
+  normalizeClaudeInteractivePayload,
+  normalizeClaudeRequestKind,
+  parseClaudeLine,
+} from './claudeCliAdapter.js';
 
 describe('Claude adapter helpers', () => {
   it('extracts text from arrays and objects', () => {
@@ -60,7 +68,6 @@ describe('Claude adapter helpers', () => {
   });
 
   it('does not produce plan kind for messages containing plan keywords', () => {
-    // After removing looksLikePlanEvent, messages with "plan mode" should be treated as normal text
     const assistantWithPlan = parseClaudeLine(JSON.stringify({
       type: 'assistant',
       message: { content: [{ text: 'I am now in plan mode and will create a plan' }] },
@@ -81,8 +88,66 @@ describe('Claude adapter helpers', () => {
     }));
     expect(systemWithPlan.kind).toBe('ignore');
 
-    // Plain text in catch path should not become plan
     const plainText = parseClaudeLine('permit to execute something');
     expect(plainText.kind).toBe('delta');
+  });
+
+  it('normalizes plan-exit requests from tool permissions', () => {
+    expect(normalizeClaudeRequestKind('can_use_tool', { tool_name: 'ExitPlanMode' })).toBe('plan_exit');
+    expect(normalizeClaudeInteractivePayload('can_use_tool', 'req-plan', {
+      tool_name: 'ExitPlanMode',
+      tool_input: { plan: '1. Explore\n2. Write README' },
+    })).toMatchObject({
+      requestId: 'req-plan',
+      requestKind: 'plan_exit',
+      toolName: 'ExitPlanMode',
+      message: '1. Explore\n2. Write README',
+    });
+  });
+
+  it('normalizes question requests from elicitation payloads', () => {
+    expect(normalizeClaudeRequestKind('elicitation', { message: 'Which directory should I inspect first?' })).toBe('question');
+    expect(normalizeClaudeInteractivePayload('elicitation', 'req-q', {
+      message: 'Which directory should I inspect first?',
+    })).toMatchObject({
+      requestId: 'req-q',
+      requestKind: 'question',
+      message: 'Which directory should I inspect first?',
+    });
+  });
+
+  it('extracts subagent spawn payload from Task tool calls', () => {
+    expect(extractClaudeSubagentPayload({
+      name: 'Task',
+      input: {
+        prompt: 'Explore the backend and frontend in parallel',
+        description: 'Multi-agent repo exploration',
+        agents: [{ thread_id: 'thread-a' }, { thread_id: 'thread-b' }],
+        model: 'claude-sonnet',
+      },
+    })).toMatchObject({
+      tool: 'spawnAgent',
+      status: 'inProgress',
+      prompt: 'Explore the backend and frontend in parallel',
+      description: 'Multi-agent repo exploration',
+      receiverThreadIds: ['thread-a', 'thread-b'],
+      model: 'claude-sonnet',
+    });
+  });
+
+  it('extracts subagent completion payload from Task results', () => {
+    expect(extractClaudeSubagentResultPayload({
+      name: 'Task',
+      result: {
+        status: 'completed',
+        description: 'Agents finished exploration',
+        receiverThreadIds: ['thread-a', 'thread-b'],
+      },
+    })).toMatchObject({
+      tool: 'spawnAgent',
+      status: 'completed',
+      description: 'Agents finished exploration',
+      receiverThreadIds: ['thread-a', 'thread-b'],
+    });
   });
 });

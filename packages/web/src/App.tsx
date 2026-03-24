@@ -11,6 +11,41 @@ import {
 } from './lib/api';
 import type { Conversation, ConversationEvent } from './lib/types';
 
+type Theme = 'light' | 'dark' | 'dusk' | 'sand';
+
+const THEMES: { value: Theme; label: string }[] = [
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+  { value: 'dusk', label: 'Dusk' },
+  { value: 'sand', label: 'Sand' },
+];
+
+function getInitialTheme(): Theme {
+  const stored = localStorage.getItem('agentmux-theme');
+  if (stored && THEMES.some((t) => t.value === stored)) {
+    return stored as Theme;
+  }
+  return 'light';
+}
+
+function ThemePicker({ current, onChange }: { current: Theme; onChange: (t: Theme) => void }) {
+  return (
+    <div className="theme-picker">
+      <span className="theme-picker-label">Theme</span>
+      {THEMES.map((t) => (
+        <button
+          key={t.value}
+          className={`theme-swatch ${t.value === current ? 'active' : ''}`}
+          data-theme-value={t.value}
+          onClick={() => onChange(t.value)}
+          title={t.label}
+          aria-label={`Switch to ${t.label} theme`}
+        />
+      ))}
+    </div>
+  );
+}
+
 type UiMessage = {
   id: string;
   role: 'user' | 'assistant' | 'status' | 'error' | 'tool' | 'request';
@@ -109,8 +144,15 @@ export function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
   const subscribedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('agentmux-theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     setIsLoadingConversations(true);
@@ -204,6 +246,7 @@ export function App() {
     const conversation = await createConversation(backend);
     setConversations((current) => [conversation, ...current]);
     setActiveId(conversation.id);
+    setSidebarOpen(false);
   }
 
   async function handleSend() {
@@ -255,7 +298,11 @@ export function App() {
 
   return (
     <div className="app-shell agentmux-like-shell">
-      <aside className="sidebar">
+      <div
+        className={`sidebar-backdrop ${sidebarOpen ? 'visible' : ''}`}
+        onClick={() => setSidebarOpen(false)}
+      />
+      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <div>
             <h1>AgentMux</h1>
@@ -281,7 +328,7 @@ export function App() {
               <button
                 key={conversation.id}
                 className={`conversation-item ${conversation.id === activeId ? 'active' : ''}`}
-                onClick={() => setActiveId(conversation.id)}
+                onClick={() => { setActiveId(conversation.id); setSidebarOpen(false); }}
               >
                 <div className="conversation-title-row">
                   <span className={`backend-pill ${conversation.backend}`}>{conversation.backend}</span>
@@ -293,6 +340,7 @@ export function App() {
             ))
           )}
         </div>
+        <ThemePicker current={theme} onChange={setTheme} />
       </aside>
 
       <main className="chat-pane">
@@ -303,6 +351,15 @@ export function App() {
         ) : (
           <>
             <header className="chat-header">
+              <button
+                className="sidebar-toggle"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open sidebar"
+              >
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M3 5h14M3 10h14M3 15h14" />
+                </svg>
+              </button>
               <div>
                 <h2>{activeConversation?.title ?? 'No conversation selected'}</h2>
                 <p>{activeConversation ? `${activeConversation.backend} · ${activeConversation.runtimeState}` : 'Create a conversation to begin'}</p>

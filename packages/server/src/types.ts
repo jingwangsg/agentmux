@@ -27,13 +27,40 @@ export type EventType =
   | 'approval.request'
   | 'error';
 
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
+export type ConversationMode = 'default' | 'plan' | 'auto-accept';
+
+export interface ConversationConfig {
+  model?: string;
+  reasoningEffort?: ReasoningEffort | string;
+  mode?: ConversationMode | string;
+  [key: string]: unknown;
+}
+
+export interface ConfigCandidate {
+  value: string;
+  label: string;
+  description?: string;
+  disabled?: boolean;
+}
+
+export interface ConversationConfigCandidates {
+  backend: BackendType;
+  defaults: Required<Pick<ConversationConfig, 'model' | 'reasoningEffort' | 'mode'>>;
+  candidates: {
+    model: ConfigCandidate[];
+    reasoningEffort: ConfigCandidate[];
+    mode: ConfigCandidate[];
+  };
+}
+
 export interface ConversationRecord {
   id: string;
   backend: BackendType;
   title: string;
   runtimeState: RuntimeState;
   cwd: string | null;
-  config: Record<string, unknown>;
+  config: ConversationConfig;
   resumeHandle: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
@@ -57,7 +84,11 @@ export interface CreateConversationInput {
   backend: BackendType;
   title?: string;
   cwd?: string;
-  config?: Record<string, unknown>;
+  config?: ConversationConfig;
+}
+
+export interface UpdateConversationConfigInput {
+  config: Partial<ConversationConfig>;
 }
 
 export interface MessageInput {
